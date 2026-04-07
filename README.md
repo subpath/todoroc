@@ -1,0 +1,91 @@
+# todoroc
+
+A terminal-based todo manager with semantic search, GitHub, and Jira integrations.
+
+![Rust](https://img.shields.io/badge/rust-stable-orange)
+
+## Features
+
+- **Multi-pane TUI** — topics list, todos list, and search panel
+- **Semantic search** — AI-powered search across all todos using local ONNX embeddings (no cloud)
+- **GitHub sync** — pulls your open PRs and pending review requests via `gh` CLI
+- **Jira sync** — pulls sprint and backlog items via Atlassian `acli`
+- **SQLite storage** — all data stored locally in `~/.todo-tui/todos.db`
+- **URL support** — attach and open URLs directly from todos (`o` to open in browser)
+
+## Installation
+
+```bash
+# Requires Rust stable
+cargo build --release
+
+# Install to ~/.local/bin/todo
+make install
+```
+
+## First Run
+
+```bash
+# Download the default embedding model (required for semantic search)
+todo --setup
+
+# Launch
+todo
+```
+
+## Usage
+
+```
+todo [OPTIONS]
+
+Options:
+  --setup              Download default embedding model
+  --model <hf-repo>    Download and activate a Hugging Face ONNX model
+  --reindex            Re-embed all todos with the current model
+  --clear-db           Delete all data (with confirmation)
+  --sync               Full sync: GitHub + Jira + reindex
+  --sync-gh            Sync GitHub PRs only
+  --sync-jira          Sync Jira issues only
+```
+
+## Keybindings
+
+| Key | Action |
+|-----|--------|
+| `Tab` / `Shift+Tab` | Cycle focus between panels |
+| `1` / `2` / `3` | Focus Topics / Todos / Search |
+| `↑↓` / `jk` | Navigate |
+| `n` | New topic / todo / search query |
+| `e` | Edit selected item |
+| `d` | Delete selected item |
+| `Space` | Toggle todo completion |
+| `o` | Open attached URL in browser |
+| `Enter` | Save or execute search |
+| `i` | Info popup (model, DB stats) |
+| `q` | Quit |
+
+## Integrations
+
+**GitHub** — requires [`gh`](https://cli.github.com/) installed and authenticated. Syncs open PRs and review requests into dedicated topics.
+
+**Jira** — requires [`acli`](https://bobswift.atlassian.net/wiki/spaces/ACLI/overview) installed and authenticated. Syncs sprint and backlog items.
+
+## Development
+
+```bash
+make run       # Build and run (debug)
+make check     # Fast compile check
+make fmt       # Format code
+make lint      # Run Clippy
+make clean     # Remove build artifacts
+```
+
+## Data
+
+| Path | Contents |
+|------|----------|
+| `~/.todo-tui/todos.db` | SQLite database |
+| `~/.todo-tui/model/` | ONNX model + tokenizer |
+| `~/.todo-tui/model_name.txt` | Active model name |
+
+The default embedding model is `sentence-transformers/all-MiniLM-L6-v2` (384-dim vectors). Any Hugging Face ONNX-compatible model can be used via `--model`.
