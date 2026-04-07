@@ -1,5 +1,9 @@
 # todoroc
 
+<p align="center">
+  <img src="assets/mascot.png" width="300" alt="todoroc mascot"/>
+</p>
+
 A terminal-based todo manager with semantic search, GitHub, and Jira integrations.
 
 ![Rust](https://img.shields.io/badge/rust-stable-orange)
