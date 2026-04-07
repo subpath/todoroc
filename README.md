@@ -1,7 +1,7 @@
 # todoroc
 
 <p align="center">
-  <img src="assets/mascot.jpg" width="500" alt="todoroc mascot"/>
+  <img src="assets/mascot.jpg" width="300" alt="todoroc mascot"/>
 </p>
 
 A terminal-based todo manager with semantic search, GitHub, and Jira integrations.
