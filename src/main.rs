@@ -46,14 +46,14 @@ fn main() -> Result<()> {
     if let Some(pos) = args.iter().position(|a| a == "--model") {
         let model = args.get(pos + 1)
             .map(|s| s.as_str())
-            .unwrap_or("sentence-transformers/all-MiniLM-L6-v2");
+            .unwrap_or("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2");
         setup::download_model(&dir.join("model"), model)?;
         return Ok(());
     }
 
     // --setup  →  download default model (kept for backwards compat)
     if args.iter().any(|a| a == "--setup") {
-        setup::download_model(&dir.join("model"), "sentence-transformers/all-MiniLM-L6-v2")?;
+        setup::download_model(&dir.join("model"), "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")?;
         return Ok(());
     }
 
@@ -159,7 +159,7 @@ fn main() -> Result<()> {
     let mut app = App::new(db, embedder, info)?;
     if app.embedder.is_none() {
         app.status_message = Some(
-            "No model — run `todo-tui --model sentence-transformers/all-MiniLM-L6-v2`".into(),
+            "No model — run `todo-tui --model sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`".into(),
         );
     }
 

@@ -1,7 +1,7 @@
 # todoroc
 
 <p align="center">
-  <img src="assets/mascot.png" width="300" alt="todoroc mascot"/>
+  <img src="assets/mascot.png" width="500" alt="todoroc mascot"/>
 </p>
 
 A terminal-based todo manager with semantic search, GitHub, and Jira integrations.
@@ -21,7 +21,7 @@ A terminal-based todo manager with semantic search, GitHub, and Jira integration
 
 ```bash
 # Requires Rust stable
-cargo build --release
+make release
 
 # Install to ~/.local/bin/todo
 make install
@@ -92,4 +92,4 @@ make clean     # Remove build artifacts
 | `~/.todo-tui/model/` | ONNX model + tokenizer |
 | `~/.todo-tui/model_name.txt` | Active model name |
 
-The default embedding model is `sentence-transformers/all-MiniLM-L6-v2` (384-dim vectors). Any Hugging Face ONNX-compatible model can be used via `--model`.
+The default embedding model is `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (384-dim vectors). Any Hugging Face ONNX-compatible model can be used via `--model`.
