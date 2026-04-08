@@ -11,4 +11,5 @@ pub struct Todo {
     pub text: String,
     pub done: bool,
     pub url: Option<String>,
+    pub due_date: Option<String>, // ISO date "YYYY-MM-DD"
 }

@@ -1,5 +1,6 @@
 mod app;
 mod db;
+mod due_date;
 mod embeddings;
 mod github;
 mod jira;
@@ -204,6 +205,8 @@ fn run_loop(
                 handle_confirm_delete(app, key.code)?;
             } else if app.show_info {
                 app.show_info = false;
+            } else if app.due_popup {
+                handle_due_popup(app, key.code)?;
             } else {
                 match app.mode {
                     Mode::Normal => handle_normal(app, key.code, key.modifiers)?,
@@ -341,6 +344,42 @@ fn handle_normal(app: &mut App, key: KeyCode, _modifiers: KeyModifiers) -> Resul
 
         KeyCode::Char('o') => app.open_url(),
 
+        KeyCode::Char('s') => {
+            if app.focus == Focus::Todos {
+                app.toggle_todo_sort()?;
+            }
+        }
+
+        KeyCode::Char('@') => {
+            if app.focus == Focus::Todos {
+                app.open_due_popup();
+            }
+        }
+
+        _ => {}
+    }
+    Ok(())
+}
+
+fn handle_due_popup(app: &mut App, key: KeyCode) -> Result<()> {
+    match key {
+        KeyCode::Esc => app.close_due_popup(),
+        KeyCode::Enter => app.confirm_due_date()?,
+        KeyCode::Backspace => {
+            if delete_char_before(&mut app.due_input, app.due_cursor) {
+                app.due_cursor -= 1;
+            }
+        }
+        KeyCode::Left => {
+            if app.due_cursor > 0 { app.due_cursor -= 1; }
+        }
+        KeyCode::Right => {
+            if app.due_cursor < app.due_input.chars().count() { app.due_cursor += 1; }
+        }
+        KeyCode::Char(c) => {
+            insert_char_at(&mut app.due_input, app.due_cursor, c);
+            app.due_cursor += 1;
+        }
         _ => {}
     }
     Ok(())

@@ -1,13 +1,14 @@
+use chrono::NaiveDate;
 use ratatui::{
     Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{List, ListItem, ListState},
+    widgets::{Block, Borders, List, ListItem, ListState},
 };
 
-use crate::app::{App, Focus, Mode};
-use super::focused_block;
+use crate::app::{App, Focus, Mode, TodoSort};
+use crate::due_date;
 
 fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
@@ -37,8 +38,25 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         .map(|t| t.name.as_str())
         .unwrap_or("—");
 
-    let title = format!("Items — {}", topic_name);
-    let block = focused_block(&title, focused);
+    let border_style = if focused {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let dim = Style::default().fg(Color::from_u32(0x808080)); // medium gray
+    let block = Block::default()
+        .title(Line::from(vec![
+            Span::styled(" Items", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled("  ·  ", dim),
+            Span::styled(due_date::current_date_label(), dim),
+            Span::styled("  ", dim),
+            Span::styled(due_date::current_week_label(), dim),
+            Span::styled("  ·  ", dim),
+            Span::styled(topic_name, dim.add_modifier(Modifier::BOLD)),
+            Span::raw(" "),
+        ]))
+        .borders(Borders::ALL)
+        .border_style(border_style);
 
     let mut items: Vec<ListItem> = app
         .todos
@@ -57,13 +75,23 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             } else {
                 Style::default()
             };
-            // reserve: 2 border + 2 highlight symbol + 4 check + 2 link indicator
-            let max_text = (area.width as usize).saturating_sub(12);
+            // Build due date badge first so we can account for its width
+            let due_badge: Option<(String, Color)> = t.due_date.as_deref()
+                .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+                .map(|d| { let (l, c) = due_date::label(d); (format!("[{}] ", l), c) });
+
+            let badge_len = due_badge.as_ref().map(|(s, _)| s.chars().count()).unwrap_or(0);
+            // reserve: 2 border + 2 highlight symbol + 4 check + badge + 2 url indicator
+            let max_text = (area.width as usize).saturating_sub(12 + badge_len);
             let display = display_text(&t.text, max_text);
+
             let mut spans = vec![
                 Span::styled(format!("{} ", check), check_style),
-                Span::styled(display, text_style),
             ];
+            if let Some((lbl, color)) = due_badge {
+                spans.push(Span::styled(lbl, Style::default().fg(color)));
+            }
+            spans.push(Span::styled(display, text_style));
             if t.url.is_some() {
                 spans.push(Span::styled(" ↗", Style::default().fg(Color::Cyan)));
             }
@@ -92,14 +120,21 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         }
     }
 
+    let sort_label = match app.todo_sort {
+        TodoSort::Bucketed => "s:sort[bucketed]",
+        TodoSort::Flat     => "s:sort[flat]",
+    };
+    let hint_owned;
     let hint = if focused && app.mode == Mode::Normal {
-        " n:new  e:edit  d:del  spc:toggle  o:open↗  ↑↓/jk:nav "
+        hint_owned = format!(" n:new  e:edit  d:del  @:due  spc:toggle  o:open↗  {}  ↑↓/jk:nav ", sort_label);
+        hint_owned.as_str()
     } else {
         ""
     };
 
+    let items_len = items.len();
     let list = List::new(items)
-        .block(block.title_bottom(hint))
+        .block(block.title_bottom(hint.to_string()))
         .highlight_style(
             Style::default()
                 .fg(Color::Black)
@@ -109,7 +144,10 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         .highlight_symbol("> ");
 
     let mut state = ListState::default();
-    if !app.todos.is_empty() {
+    if focused && app.mode == Mode::Insert && !app.editing {
+        // Scroll to the new input line at the bottom
+        state.select(Some(items_len.saturating_sub(1)));
+    } else if !app.todos.is_empty() {
         state.select(Some(app.selected_todo));
     }
 

@@ -16,7 +16,14 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let mut items: Vec<ListItem> = app
         .topics
         .iter()
-        .map(|t| ListItem::new(Line::from(t.name.clone())))
+        .map(|t| {
+            let (total, done) = app.topic_counts.get(&t.id).copied().unwrap_or((0, 0));
+            let count = Span::styled(
+                format!(" [{}/{}]", done, total),
+                Style::default().fg(if done == total && total > 0 { Color::Green } else { Color::Gray }),
+            );
+            ListItem::new(Line::from(vec![Span::raw(t.name.clone()), count]))
+        })
         .collect();
 
     // Show input line when inserting

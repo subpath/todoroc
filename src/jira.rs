@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::process::Command;
 use std::time::Duration;
 
@@ -22,6 +23,18 @@ struct Status {
 struct Fields {
     summary: String,
     status: Status,
+}
+
+#[derive(Debug, Deserialize)]
+struct DueDateFields {
+    #[serde(rename = "duedate")]
+    due_date: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DueDateIssue {
+    key: String,
+    fields: DueDateFields,
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,6 +102,23 @@ fn fetch_issues(jql: &str) -> Result<Vec<JiraIssue>> {
     Ok(issues)
 }
 
+fn fetch_due_dates(issues: &[JiraIssue]) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    for issue in issues {
+        let Ok(output) = Command::new("acli")
+            .args(["jira", "workitem", "view", &issue.key, "--fields", "key,duedate", "--json"])
+            .output()
+        else { continue };
+        if !output.status.success() { continue; }
+        let Ok(json) = String::from_utf8(output.stdout) else { continue };
+        let Ok(parsed) = serde_json::from_str::<DueDateIssue>(&json) else { continue };
+        if let Some(due) = parsed.fields.due_date {
+            map.insert(parsed.key, due);
+        }
+    }
+    map
+}
+
 fn sync_topic(db: &Database, embedder: Option<&Embedder>, topic_name: &str, issues: &[JiraIssue]) -> Result<()> {
     let topic = db.find_or_create_topic(topic_name)?;
 
@@ -103,6 +133,9 @@ fn sync_topic(db: &Database, embedder: Option<&Embedder>, topic_name: &str, issu
     );
     pb.enable_steady_tick(Duration::from_millis(80));
 
+    pb.set_message("fetching due dates...");
+    let due_dates = fetch_due_dates(issues);
+
     let mut added = 0usize;
     let mut updated = 0usize;
 
@@ -115,15 +148,20 @@ fn sync_topic(db: &Database, embedder: Option<&Embedder>, topic_name: &str, issu
         let prefix = format!("{} ", issue.key);
         let embedding = embedder.and_then(|e| e.embed(&issue.fields.summary).ok());
 
-        match db.find_todo_by_prefix(topic.id, &prefix)? {
+        let todo_id = match db.find_todo_by_prefix(topic.id, &prefix)? {
             Some((id, _)) => {
                 db.update_todo_text_and_done(id, &text, done, Some(url.as_str()), embedding.as_deref())?;
                 updated += 1;
+                id
             }
             None => {
-                db.insert_todo(topic.id, &text, Some(url.as_str()), embedding.as_deref())?;
+                let todo = db.insert_todo(topic.id, &text, Some(url.as_str()), embedding.as_deref())?;
                 added += 1;
+                todo.id
             }
+        };
+        if let Some(due) = due_dates.get(&issue.key) {
+            db.set_todo_due_date(todo_id, Some(due.as_str()))?;
         }
 
         pb.inc(1);

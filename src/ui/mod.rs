@@ -11,6 +11,7 @@ use ratatui::{
 };
 
 use crate::app::App;
+use crate::due_date;
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let size = frame.area();
@@ -116,6 +117,64 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
         frame.render_widget(Clear, area);
         frame.render_widget(Paragraph::new(text).block(block).alignment(Alignment::Center), area);
+    }
+
+    // Due date popup
+    if app.due_popup {
+        let hint = "Enter:confirm  Esc:cancel  | 3d  fri  eow  W16  16w  YYYY-MM-DD  (empty=clear)";
+        let dialog_w = 64u16.min(size.width.saturating_sub(4));
+        let dialog_h = 6u16;
+        let x = size.x + (size.width.saturating_sub(dialog_w)) / 2;
+        let y = size.y + (size.height.saturating_sub(dialog_h)) / 2;
+        let area = Rect { x, y, width: dialog_w, height: dialog_h };
+
+        let block = Block::default()
+            .title(Span::styled(" Set Due Date ", Style::default().add_modifier(Modifier::BOLD)))
+            .title_bottom(Span::styled(
+                format!(" {} ", hint),
+                Style::default().fg(Color::DarkGray),
+            ))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow));
+
+        let chars: Vec<char> = app.due_input.chars().collect();
+        let before: String = chars[..app.due_cursor.min(chars.len())].iter().collect();
+        let (cursor_ch, after): (String, String) = if app.due_cursor < chars.len() {
+            (chars[app.due_cursor].to_string(), chars[app.due_cursor + 1..].iter().collect())
+        } else {
+            ("_".to_string(), String::new())
+        };
+
+        let input_line = Line::from(vec![
+            Span::styled("  Due: ", Style::default().fg(Color::DarkGray)),
+            Span::raw(before),
+            Span::styled(cursor_ch, Style::default().fg(Color::Yellow).add_modifier(Modifier::SLOW_BLINK)),
+            Span::raw(after),
+        ]);
+
+        // Preview parsed date
+        let preview = match due_date::parse(&app.due_input) {
+            Ok(Some(d)) => {
+                let (lbl, _) = due_date::label(d);
+                format!("  → {}", lbl)
+            }
+            Ok(None) => "  → (clear)".to_string(),
+            Err(e)   => format!("  ✗ {}", e),
+        };
+        let preview_color = if app.due_input.is_empty() || due_date::parse(&app.due_input).is_ok() {
+            Color::DarkGray
+        } else {
+            Color::Red
+        };
+
+        let text = vec![
+            Line::from(""),
+            input_line,
+            Line::from(Span::styled(preview, Style::default().fg(preview_color))),
+        ];
+
+        frame.render_widget(Clear, area);
+        frame.render_widget(Paragraph::new(text).block(block), area);
     }
 
     // Quit confirmation dialog

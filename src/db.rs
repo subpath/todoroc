@@ -42,6 +42,14 @@ impl Database {
         if !has_url {
             self.conn.execute("ALTER TABLE todos ADD COLUMN url TEXT", [])?;
         }
+        // Migration: add due_date column
+        let has_due: bool = self.conn.query_row(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('todos') WHERE name = 'due_date'",
+            [], |r| r.get(0),
+        )?;
+        if !has_due {
+            self.conn.execute("ALTER TABLE todos ADD COLUMN due_date TEXT", [])?;
+        }
         Ok(())
     }
 
@@ -132,7 +140,15 @@ impl Database {
             params![topic_id, text, url, blob, now.to_rfc3339()],
         )?;
         let id = self.conn.last_insert_rowid();
-        Ok(Todo { id, topic_id, text: text.to_string(), done: false, url: url.map(|s| s.to_string()) })
+        Ok(Todo { id, topic_id, text: text.to_string(), done: false, url: url.map(|s| s.to_string()), due_date: None })
+    }
+
+    pub fn set_todo_due_date(&self, id: i64, due_date: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE todos SET due_date = ?1 WHERE id = ?2",
+            params![due_date, id],
+        )?;
+        Ok(())
     }
 
     pub fn toggle_todo(&self, id: i64) -> Result<bool> {
@@ -155,14 +171,29 @@ impl Database {
 
     pub fn todos_for_topic(&self, topic_id: i64) -> Result<Vec<Todo>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, topic_id, text, done, url FROM todos WHERE topic_id = ?1 ORDER BY created_at"
+            "SELECT id, topic_id, text, done, url, due_date FROM todos WHERE topic_id = ?1 ORDER BY created_at"
         )?;
         let todos = stmt.query_map(params![topic_id], |row| {
-            Ok(Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: row.get(4)? })
+            Ok(Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: row.get(4)?, due_date: row.get(5)? })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("Failed to list todos")?;
         Ok(todos)
+    }
+
+    pub fn topic_counts(&self) -> Result<std::collections::HashMap<i64, (i64, i64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT topic_id, COUNT(*), SUM(done) FROM todos GROUP BY topic_id"
+        )?;
+        let mut map = std::collections::HashMap::new();
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+        })?;
+        for row in rows {
+            let (topic_id, total, done) = row?;
+            map.insert(topic_id, (total, done));
+        }
+        Ok(map)
     }
 
     pub fn stats(&self) -> Result<(usize, usize, usize)> {
@@ -174,10 +205,10 @@ impl Database {
 
     pub fn all_todos(&self) -> Result<Vec<Todo>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, topic_id, text, done, url FROM todos ORDER BY id"
+            "SELECT id, topic_id, text, done, url, due_date FROM todos ORDER BY id"
         )?;
         let todos = stmt.query_map([], |row| {
-            Ok(Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: row.get(4)? })
+            Ok(Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: row.get(4)?, due_date: row.get(5)? })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("Failed to list all todos")?;
@@ -199,7 +230,7 @@ impl Database {
         )?;
         let todos = stmt.query_map([], |row| {
             let blob: Vec<u8> = row.get(4)?;
-            let todo = Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: None };
+            let todo = Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: None, due_date: None };
             let emb = decode_embedding(&blob);
             Ok((todo, emb))
         })?

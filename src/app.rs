@@ -1,6 +1,8 @@
 use anyhow::Result;
+use std::collections::HashMap;
 
 use crate::db::{cosine_similarity, Database};
+use crate::due_date;
 use crate::embeddings::Embedder;
 use crate::models::{Todo, Topic};
 
@@ -15,6 +17,23 @@ pub enum Focus {
 pub enum Mode {
     Normal,
     Insert,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TodoSort {
+    Bucketed, // unfinished by created_at, then finished by created_at
+    Flat,     // all by created_at
+}
+
+impl TodoSort {
+    pub fn apply(self, todos: &mut Vec<crate::models::Todo>) {
+        // DB always returns todos in created_at order; a stable sort preserves that within buckets.
+        if self == TodoSort::Bucketed {
+            todos.sort_by_key(|t| t.done);
+        }
+        // Flat: already in created_at order from DB — nothing to do.
+    }
+
 }
 
 pub struct AppInfo {
@@ -44,16 +63,23 @@ pub struct App {
     pub confirm_delete: Option<Focus>, // Some(focus) means pending delete confirmation
     pub show_info: bool,
     pub info: AppInfo,
+    pub todo_sort: TodoSort,
+    pub topic_counts: HashMap<i64, (i64, i64)>, // topic_id -> (total, done)
+    pub due_popup: bool,
+    pub due_input: String,
+    pub due_cursor: usize,
 }
 
 impl App {
     pub fn new(db: Database, embedder: Option<Embedder>, info: AppInfo) -> Result<Self> {
         let topics = db.list_topics()?;
-        let todos = if topics.is_empty() {
+        let topic_counts = db.topic_counts()?;
+        let mut todos = if topics.is_empty() {
             vec![]
         } else {
             db.todos_for_topic(topics[0].id)?
         };
+        TodoSort::Bucketed.apply(&mut todos);
 
         Ok(Self {
             topics,
@@ -76,6 +102,11 @@ impl App {
             confirm_delete: None,
             show_info: false,
             info,
+            todo_sort: TodoSort::Bucketed,
+            topic_counts,
+            due_popup: false,
+            due_input: String::new(),
+            due_cursor: 0,
         })
     }
 
@@ -109,8 +140,30 @@ impl App {
         } else {
             self.todos = vec![];
         }
+        self.todo_sort.clone().apply(&mut self.todos);
         if self.selected_todo >= self.todos.len() {
             self.selected_todo = self.todos.len().saturating_sub(1);
+        }
+        self.topic_counts = self.db.topic_counts()?;
+        Ok(())
+    }
+
+    pub fn toggle_todo_sort(&mut self) -> Result<()> {
+        let selected_id = self.todos.get(self.selected_todo).map(|t| t.id);
+        self.todo_sort = match self.todo_sort {
+            TodoSort::Bucketed => TodoSort::Flat,
+            TodoSort::Flat => TodoSort::Bucketed,
+        };
+        // Reload from DB to get canonical created_at order, then apply sort.
+        if let Some(id) = self.selected_topic_id() {
+            self.todos = self.db.todos_for_topic(id)?;
+        }
+        self.todo_sort.clone().apply(&mut self.todos);
+        // Keep selection on the same item after re-sort.
+        if let Some(id) = selected_id {
+            if let Some(pos) = self.todos.iter().position(|t| t.id == id) {
+                self.selected_todo = pos;
+            }
         }
         Ok(())
     }
@@ -183,6 +236,43 @@ impl App {
         Ok(())
     }
 
+    pub fn open_due_popup(&mut self) {
+        if self.todos.is_empty() { return; }
+        let current = self.todos.get(self.selected_todo)
+            .and_then(|t| t.due_date.clone())
+            .unwrap_or_default();
+        self.due_input = current.clone();
+        self.due_cursor = current.chars().count();
+        self.due_popup = true;
+    }
+
+    pub fn confirm_due_date(&mut self) -> Result<()> {
+        let Some(todo) = self.todos.get(self.selected_todo) else { return Ok(()); };
+        let id = todo.id;
+        match due_date::parse(&self.due_input) {
+            Ok(date) => {
+                let date_str = date.map(|d| d.format("%Y-%m-%d").to_string());
+                self.db.set_todo_due_date(id, date_str.as_deref())?;
+                if let Some(t) = self.todos.get_mut(self.selected_todo) {
+                    t.due_date = date_str;
+                }
+                self.due_popup = false;
+                self.due_input.clear();
+                self.due_cursor = 0;
+            }
+            Err(msg) => {
+                self.status_message = Some(msg);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn close_due_popup(&mut self) {
+        self.due_popup = false;
+        self.due_input.clear();
+        self.due_cursor = 0;
+    }
+
     pub fn run_search(&mut self) -> Result<()> {
         if self.search_query.is_empty() {
             self.search_results.clear();
@@ -204,8 +294,10 @@ impl App {
             .collect();
 
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        scored.truncate(10);
-        self.search_results = scored;
+        let mut undone: Vec<_> = scored.iter().filter(|(t, _)| !t.done).take(7).cloned().collect();
+        let done: Vec<_>       = scored.iter().filter(|(t, _)|  t.done).take(5).cloned().collect();
+        undone.extend(done);
+        self.search_results = undone;
         self.selected_search_result = 0;
         Ok(())
     }
