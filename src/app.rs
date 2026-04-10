@@ -167,6 +167,8 @@ pub struct App {
     pub sync_status: Option<SyncStatus>,
     pub search_debounce: Option<Instant>,
     pub search_open: bool,
+    pub topic_cursor_memory: HashMap<i64, usize>,
+    pub last_topic_id: Option<i64>,
 }
 
 impl App {
@@ -216,6 +218,8 @@ impl App {
             sync_status: None,
             search_debounce: None,
             search_open: false,
+            topic_cursor_memory: HashMap::new(),
+            last_topic_id: Some(-1),
         })
     }
 
@@ -238,7 +242,7 @@ impl App {
         }
     }
 
-    pub fn reload_topics(&mut self) -> Result<()> {
+    fn reload_topics_list(&mut self) -> Result<()> {
         let mut topics = vec![
             Topic { id: -1, name: "🔄 In Progress".to_string() },
             Topic { id: -2, name: "✅ Completed".to_string() },
@@ -249,12 +253,26 @@ impl App {
         if self.selected_topic >= self.topics.len() {
             self.selected_topic = self.topics.len().saturating_sub(1);
         }
+        Ok(())
+    }
+
+    pub fn reload_topics(&mut self) -> Result<()> {
+        self.reload_topics_list()?;
         self.reload_todos()?;
         Ok(())
     }
 
     pub fn reload_todos(&mut self) -> Result<()> {
-        self.todos = match self.selected_topic_id() {
+        let new_id = self.selected_topic_id();
+
+        // Save cursor position when switching away from a topic
+        if self.last_topic_id != new_id {
+            if let Some(prev) = self.last_topic_id {
+                self.topic_cursor_memory.insert(prev, self.selected_todo);
+            }
+        }
+
+        self.todos = match new_id {
             Some(-1) => self.db.todos_in_progress()?,
             Some(-2) => self.db.todos_completed()?,
             Some(-3) => self.db.todos_due_this_week()?,
@@ -262,15 +280,27 @@ impl App {
             None     => vec![],
         };
         self.todo_sort.clone().apply(&mut self.todos);
-        if self.selected_todo >= self.todos.len() {
-            self.selected_todo = self.todos.len().saturating_sub(1);
+
+        let max = self.todos.len().saturating_sub(1);
+        if self.last_topic_id != new_id {
+            // Topic switch: restore saved cursor or go to top
+            self.selected_todo = new_id
+                .and_then(|id| self.topic_cursor_memory.get(&id).copied())
+                .unwrap_or(0)
+                .min(max);
+        } else {
+            // Same-topic reload (add/delete/edit): just clamp
+            self.selected_todo = self.selected_todo.min(max);
         }
+
         self.topic_counts = self.db.topic_counts()?;
         let (in_progress, completed) = self.db.virtual_topic_counts()?;
         self.topic_counts.insert(-1, (in_progress, 0));
         self.topic_counts.insert(-2, (completed, completed));
         let due_this_week = self.db.due_this_week_count()?;
         self.topic_counts.insert(-3, (due_this_week, 0));
+
+        self.last_topic_id = new_id;
         Ok(())
     }
 
@@ -456,6 +486,66 @@ impl App {
 
     pub fn close_detail(&mut self) {
         self.detail = None;
+    }
+
+    /// Bump the selected todo's due date by `days` (positive = forward, negative = back).
+    /// If no due date is set, `+` uses today as the base; `-` does nothing.
+    pub fn snooze_due_date(&mut self, days: i64) -> Result<()> {
+        let Some(todo) = self.todos.get(self.selected_todo) else { return Ok(()); };
+        let base = match todo.due_date.as_deref()
+            .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+        {
+            Some(d) => d,
+            None => {
+                if days < 0 { return Ok(()); }
+                chrono::Local::now().date_naive()
+            }
+        };
+        let new_date = base + chrono::Duration::days(days);
+        let date_str = new_date.format("%Y-%m-%d").to_string();
+        let id = todo.id;
+        self.db.set_todo_due_date(id, Some(&date_str))?;
+        if let Some(t) = self.todos.get_mut(self.selected_todo) {
+            t.due_date = Some(date_str);
+        }
+        Ok(())
+    }
+
+    pub fn move_topic_up(&mut self) -> Result<()> {
+        let Some(topic) = self.topics.get(self.selected_topic) else { return Ok(()); };
+        if topic.id <= 0 { return Ok(()); }
+        let curr_id = topic.id;
+        let prev_idx = self.topics[..self.selected_topic].iter().rposition(|t| t.id > 0);
+        if let Some(prev_idx) = prev_idx {
+            let prev_id = self.topics[prev_idx].id;
+            self.db.swap_topic_sort_order(curr_id, prev_id)?;
+            self.reload_topics_list()?;
+            if let Some(new_pos) = self.topics.iter().position(|t| t.id == curr_id) {
+                self.selected_topic = new_pos;
+            }
+            self.reload_todos()?;
+        }
+        Ok(())
+    }
+
+    pub fn move_topic_down(&mut self) -> Result<()> {
+        let Some(topic) = self.topics.get(self.selected_topic) else { return Ok(()); };
+        if topic.id <= 0 { return Ok(()); }
+        let curr_id = topic.id;
+        let next_idx = self.topics[self.selected_topic + 1..]
+            .iter()
+            .position(|t| t.id > 0)
+            .map(|i| self.selected_topic + 1 + i);
+        if let Some(next_idx) = next_idx {
+            let next_id = self.topics[next_idx].id;
+            self.db.swap_topic_sort_order(curr_id, next_id)?;
+            self.reload_topics_list()?;
+            if let Some(new_pos) = self.topics.iter().position(|t| t.id == curr_id) {
+                self.selected_topic = new_pos;
+            }
+            self.reload_todos()?;
+        }
+        Ok(())
     }
 
     pub fn open_due_popup(&mut self) {

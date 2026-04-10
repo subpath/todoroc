@@ -463,6 +463,10 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
         KeyCode::Char(' ') => {
             if app.focus == Focus::Todos {
                 app.toggle_todo()?;
+                // Auto-advance to the next item after toggling
+                if app.selected_todo + 1 < app.todos.len() {
+                    app.selected_todo += 1;
+                }
             }
         }
 
@@ -486,6 +490,18 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
             }
         }
 
+        KeyCode::Char('+') => {
+            if app.focus == Focus::Todos && !app.todos.is_empty() {
+                app.snooze_due_date(1)?;
+            }
+        }
+
+        KeyCode::Char('-') => {
+            if app.focus == Focus::Todos && !app.todos.is_empty() {
+                app.snooze_due_date(-1)?;
+            }
+        }
+
         KeyCode::Char('p') => {
             if app.focus == Focus::Todos {
                 app.cycle_priority()?;
@@ -495,6 +511,18 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
         KeyCode::Char('m') => {
             if app.focus == Focus::Todos && !app.todos.is_empty() {
                 app.open_move_popup();
+            }
+        }
+
+        KeyCode::Char('J') => {
+            if app.focus == Focus::Topics {
+                app.move_topic_down()?;
+            }
+        }
+
+        KeyCode::Char('K') => {
+            if app.focus == Focus::Topics {
+                app.move_topic_up()?;
             }
         }
 

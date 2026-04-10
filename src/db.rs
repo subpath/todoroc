@@ -39,6 +39,7 @@ const MIGRATIONS: &[M] = &[
         );
     "),
     M::up("ALTER TABLE comments ADD COLUMN url TEXT;"),
+    M::up("ALTER TABLE topics ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0; UPDATE topics SET sort_order = id;"),
 ];
 
 impl Database {
@@ -73,7 +74,7 @@ impl Database {
         if let Some((id, name)) = existing {
             return Ok(Topic { id, name });
         }
-        self.conn.execute("INSERT INTO topics (name) VALUES (?1)", params![name])?;
+        self.conn.execute("INSERT INTO topics (name, sort_order) VALUES (?1, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM topics))", params![name])?;
         Ok(Topic { id: self.conn.last_insert_rowid(), name: name.to_string() })
     }
 
@@ -115,7 +116,7 @@ impl Database {
     pub fn insert_topic(&self, name: &str, embedding: Option<&[f32]>) -> Result<Topic> {
         let blob = embedding.map(encode_embedding);
         self.conn.execute(
-            "INSERT INTO topics (name, embedding) VALUES (?1, ?2)",
+            "INSERT INTO topics (name, embedding, sort_order) VALUES (?1, ?2, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM topics))",
             params![name, blob],
         )?;
         let id = self.conn.last_insert_rowid();
@@ -129,7 +130,7 @@ impl Database {
 
     pub fn list_topics(&self) -> Result<Vec<Topic>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name FROM topics ORDER BY id"
+            "SELECT id, name FROM topics ORDER BY sort_order, id"
         )?;
         let topics = stmt.query_map([], |row| {
             Ok(Topic { id: row.get(0)?, name: row.get(1)? })
@@ -375,6 +376,17 @@ impl Database {
         )?)
     }
 
+    /// Swap the sort_order of two topics (used for reordering).
+    pub fn swap_topic_sort_order(&self, id1: i64, id2: i64) -> Result<()> {
+        let s1: i64 = self.conn.query_row(
+            "SELECT sort_order FROM topics WHERE id = ?1", params![id1], |r| r.get(0))?;
+        let s2: i64 = self.conn.query_row(
+            "SELECT sort_order FROM topics WHERE id = ?1", params![id2], |r| r.get(0))?;
+        self.conn.execute("UPDATE topics SET sort_order = ?1 WHERE id = ?2", params![s2, id1])?;
+        self.conn.execute("UPDATE topics SET sort_order = ?1 WHERE id = ?2", params![s1, id2])?;
+        Ok(())
+    }
+
     /// Move a todo to a different topic.
     pub fn move_todo_to_topic(&self, todo_id: i64, new_topic_id: i64) -> Result<()> {
         self.conn.execute(
@@ -431,6 +443,7 @@ fn detect_legacy_version(conn: &Connection) -> Result<u32> {
 
     if !table_exists("todos")? { return Ok(0); }
     // Migrations are numbered 1-based (user_version = number of applied migrations).
+    if has_col("topics", "sort_order")? { return Ok(10); }
     if has_col("comments", "url")? { return Ok(9); }
     if table_exists("comments")? { return Ok(8); }
     if has_col("todos", "completed_at")? { return Ok(7); }

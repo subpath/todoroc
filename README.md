@@ -12,6 +12,8 @@ A terminal-based todo manager with semantic search, GitHub, and Jira integration
 
 - **Multi-pane TUI** — topics list and todos list; search is a floating overlay (`/`)
 - **Virtual topics** — built-in "🔄 In Progress", "✅ Completed", and "📅 Due This Week" aggregate views across all topics
+- **Topic reordering** — `J`/`K` moves topics up and down; order is persisted to the database
+- **Cursor memory** — switching topics and coming back restores your last position in each list
 - **Detail panel** — press `Enter` to open a full editor: text, priority, due date, URL, timestamps, and comments
 - **Comments** — attach threaded comments to any todo from the detail panel
 - **Priority levels** — inline `!1`/`!2`/`!3` syntax or `p` key to cycle; color-coded and sorted above other todos
@@ -19,7 +21,7 @@ A terminal-based todo manager with semantic search, GitHub, and Jira integration
 - **Background sync** — `S` opens a sync popup (Full / GitHub / Jira); runs in a background thread with a live spinner status
 - **Overdue digest** — summary of overdue items printed on launch before opening the TUI
 - **Semantic search** — AI-powered search overlay with debounced live results; no cloud needed (local ONNX embeddings)
-- **Due dates** — set due dates with natural language input, shown inline with color-coded urgency
+- **Due dates** — set due dates with natural language input, shown inline with color-coded urgency; `+`/`-` snooze by one day
 - **GitHub sync** — pulls your open PRs and pending review requests via `gh` CLI
 - **Jira sync** — pulls sprint and backlog items via Atlassian `acli`, including due dates set in Jira
 - **Clipboard copy** — `Ctrl+Y` in the detail panel copies the focused field to the clipboard
@@ -75,7 +77,8 @@ Options:
 | `d` | Delete selected todo |
 | `m` | Move selected todo to another topic |
 | `@` | Set due date |
-| `Space` | Toggle completion (tracks started/completed timestamps) |
+| `+` / `-` | Snooze due date forward / back by one day |
+| `Space` | Cycle state: todo → in progress → done; auto-advances cursor |
 | `o` | Open attached URL in browser |
 | `s` | Toggle sort: bucketed (priority → due date → creation) / flat |
 
@@ -92,6 +95,7 @@ Options:
 | `n` | New topic (when Topics focused) |
 | `e` | Edit selected topic |
 | `d` | Delete selected topic |
+| `J` / `K` | Move selected topic down / up |
 | `i` | Info popup (model, DB stats) |
 | `q` | Quit |
 
@@ -119,7 +123,9 @@ Options:
 
 ## Due Dates
 
-Press `@` on any todo to set a due date. Supported formats:
+Press `@` on any todo to set a due date. Use `+` / `-` to nudge an existing due date forward or back by one day without opening the popup. Pressing `+` on a todo with no due date sets it to tomorrow.
+
+Supported formats:
 
 | Input | Meaning |
 |-------|---------|
@@ -154,6 +160,10 @@ These are read-only views; new todos cannot be added to them directly.
 ## Topics
 
 Each topic shows a `[done/total]` count. The count turns green when all items are complete.
+
+Topics can be reordered with `J` (move down) and `K` (move up) while the Topics panel is focused. Order is stored in the database and persists across sessions. Virtual topics (In Progress, Completed, Due This Week) are always pinned at the top and cannot be reordered.
+
+A visual separator divides the virtual topics from your real topics in the list.
 
 ## Priority
 

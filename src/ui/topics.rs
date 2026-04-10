@@ -55,7 +55,20 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    // Show input line when inserting
+    // Separator between virtual topics (0-2) and real topics (3+)
+    let has_real_topics = app.topics.len() > 3;
+    if has_real_topics {
+        let sep = ListItem::new(Line::from(Span::styled(
+            "  ────────────────────",
+            Style::default().fg(Color::from_u32(0x505050)),
+        )));
+        items.insert(3, sep);
+    }
+
+    // Show input line when inserting.
+    // Real topics (selected_topic >= 3) are offset by 1 in `items` due to the separator.
+    let items_offset = |idx: usize| if has_real_topics && idx >= 3 { idx + 1 } else { idx };
+
     if focused && app.mode == Mode::Insert {
         let chars: Vec<char> = app.input.chars().collect();
         let before: String = chars[..app.cursor_pos.min(chars.len())].iter().collect();
@@ -70,15 +83,16 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(cursor_str, Style::default().fg(Color::Cyan).add_modifier(Modifier::SLOW_BLINK)),
             Span::raw(after),
         ]));
-        if app.editing && app.selected_topic < items.len() {
-            items[app.selected_topic] = input_line;
+        let display_idx = items_offset(app.selected_topic);
+        if app.editing && display_idx < items.len() {
+            items[display_idx] = input_line;
         } else {
             items.push(input_line);
         }
     }
 
     let hint = if focused && app.mode == Mode::Normal {
-        " 1/2/3:focus  n:new  e:edit  d:del  ↑↓/jk:nav "
+        " n:new  e:edit  d:del  J/K:reorder  ↑↓/jk:nav "
     } else {
         ""
     };
@@ -95,7 +109,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
 
     let mut state = ListState::default();
     if !app.topics.is_empty() {
-        state.select(Some(app.selected_topic));
+        state.select(Some(items_offset(app.selected_topic)));
     }
 
     frame.render_stateful_widget(list, area, &mut state);

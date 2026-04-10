@@ -138,7 +138,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     };
     let hint_owned;
     let hint = if focused && app.mode == Mode::Normal {
-        hint_owned = format!(" n:new  ↵:detail  e:edit  d:del  @:due  p:priority  m:move  spc:toggle  o:open↗  {}  /:search  ↑↓/jk:nav ", sort_label);
+        hint_owned = format!(" n:new  ↵:detail  e:edit  d:del  @:due  +/-:snooze  p:pri  m:move  spc:toggle  o:↗  {}  /:search ", sort_label);
         hint_owned.as_str()
     } else {
         ""
