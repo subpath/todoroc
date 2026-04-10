@@ -23,7 +23,7 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 
-use app::{App, AppInfo, Focus, Mode};
+use app::{App, AppInfo, DetailField, Focus, Mode};
 use db::Database;
 use embeddings::Embedder;
 
@@ -164,6 +164,9 @@ fn main() -> Result<()> {
         );
     }
 
+    // Overdue digest
+    show_overdue_digest(&app)?;
+
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -183,6 +186,33 @@ fn main() -> Result<()> {
     terminal.show_cursor()?;
 
     result
+}
+
+fn show_overdue_digest(app: &App) -> Result<()> {
+    let overdue = app.db.overdue_todos()?;
+    if overdue.is_empty() {
+        return Ok(());
+    }
+
+    let today = chrono::Local::now().date_naive();
+    println!("\n  ⚠  {} overdue item{}\n", overdue.len(), if overdue.len() == 1 { "" } else { "s" });
+    for (todo, topic) in &overdue {
+        let days_ago = todo.due_date.as_deref()
+            .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+            .map(|d| (today - d).num_days())
+            .unwrap_or(0);
+        let pri = match todo.priority {
+            Some(1) => " !1",
+            Some(2) => " !2",
+            Some(3) => " !3",
+            _       => "",
+        };
+        println!("  {}d ago{}  [{}]  {}", days_ago, pri, topic, todo.text);
+    }
+    println!("\n  Press Enter to open the app...");
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    Ok(())
 }
 
 fn run_loop(
@@ -207,6 +237,8 @@ fn run_loop(
                 app.show_info = false;
             } else if app.due_popup {
                 handle_due_popup(app, key.code)?;
+            } else if app.detail.is_some() {
+                handle_detail(app, key.code, key.modifiers)?;
             } else {
                 match app.mode {
                     Mode::Normal => handle_normal(app, key.code, key.modifiers)?,
@@ -258,7 +290,7 @@ fn delete_char_before(s: &mut String, pos: usize) -> bool {
     }
 }
 
-fn handle_normal(app: &mut App, key: KeyCode, _modifiers: KeyModifiers) -> Result<()> {
+fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
     match key {
         KeyCode::Char('q') => app.confirm_quit = true,
         KeyCode::Char('i') => app.show_info = true,
@@ -283,6 +315,8 @@ fn handle_normal(app: &mut App, key: KeyCode, _modifiers: KeyModifiers) -> Resul
         }
 
         // Navigation
+        KeyCode::Up if modifiers.contains(KeyModifiers::SHIFT) => app.nav_top(),
+        KeyCode::Down if modifiers.contains(KeyModifiers::SHIFT) => app.nav_bottom(),
         KeyCode::Up | KeyCode::Char('k') => app.nav_up(),
         KeyCode::Down | KeyCode::Char('j') => app.nav_down(),
         KeyCode::Left  => { app.focus = match app.focus { Focus::Todos | Focus::Search => Focus::Topics, f => f }; }
@@ -290,11 +324,15 @@ fn handle_normal(app: &mut App, key: KeyCode, _modifiers: KeyModifiers) -> Resul
 
         // Actions — n enters insert in all panels
         KeyCode::Char('n') => {
-            app.mode = Mode::Insert;
-            if app.focus != Focus::Search {
-                app.input.clear();
-                app.cursor_pos = 0;
-                app.editing = false;
+            if app.focus == Focus::Todos && app.is_virtual_topic() {
+                app.status_message = Some("Cannot add todos to virtual topics".into());
+            } else {
+                app.mode = Mode::Insert;
+                if app.focus != Focus::Search {
+                    app.input.clear();
+                    app.cursor_pos = 0;
+                    app.editing = false;
+                }
             }
         }
 
@@ -321,10 +359,10 @@ fn handle_normal(app: &mut App, key: KeyCode, _modifiers: KeyModifiers) -> Resul
         }
 
         KeyCode::Char('d') => match app.focus {
-            Focus::Topics if !app.topics.is_empty() => {
+            Focus::Topics if !app.topics.is_empty() && !app.is_virtual_topic() => {
                 app.confirm_delete = Some(Focus::Topics);
             }
-            Focus::Todos if !app.todos.is_empty() => {
+            Focus::Todos if !app.todos.is_empty() && !app.is_virtual_topic() => {
                 app.confirm_delete = Some(Focus::Todos);
             }
             _ => {}
@@ -337,7 +375,9 @@ fn handle_normal(app: &mut App, key: KeyCode, _modifiers: KeyModifiers) -> Resul
         }
 
         KeyCode::Enter => {
-            if app.focus == Focus::Search && !app.search_results.is_empty() {
+            if app.focus == Focus::Todos && !app.todos.is_empty() {
+                app.open_detail();
+            } else if app.focus == Focus::Search && !app.search_results.is_empty() {
                 app.jump_to_search_result()?;
             }
         }
@@ -356,9 +396,155 @@ fn handle_normal(app: &mut App, key: KeyCode, _modifiers: KeyModifiers) -> Resul
             }
         }
 
+        KeyCode::Char('p') => {
+            if app.focus == Focus::Todos {
+                app.cycle_priority()?;
+            }
+        }
+
         _ => {}
     }
     Ok(())
+}
+
+fn field_scroll_target(field: &DetailField) -> u16 {
+    match field {
+        DetailField::Text               => 0,
+        DetailField::Priority           => 3,
+        DetailField::Due                => 5,
+        DetailField::Url                => 8,
+        DetailField::NewComment         => 11,
+        DetailField::ExistingComment(i) => 14 + (*i as u16) * 4,
+    }
+}
+
+fn handle_detail(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
+    let Some(d) = app.detail.as_ref() else { return Ok(()); };
+
+    match key {
+        KeyCode::Esc => { app.close_detail(); return Ok(()); }
+        KeyCode::Enter => {
+            match &d.field.clone() {
+                DetailField::NewComment => {
+                    app.save_new_comment()?;
+                    return Ok(());
+                }
+                DetailField::ExistingComment(_) => {
+                    // Enter saves edits (same as tab-away)
+                    app.save_comment_edit()?;
+                    return Ok(());
+                }
+                _ => { app.confirm_detail()?; return Ok(()); }
+            }
+        }
+        KeyCode::Tab => {
+            let Some(d) = app.detail.as_ref() else { return Ok(()); };
+            let next_field = d.field.next(d.comments.len());
+            if matches!(d.field, DetailField::ExistingComment(_)) {
+                app.save_comment_edit()?;
+            }
+            let Some(d) = app.detail.as_mut() else { return Ok(()); };
+            d.field = next_field.clone();
+            d.detail_scroll = field_scroll_target(&next_field);
+            if let DetailField::ExistingComment(i) = &next_field {
+                app.enter_comment_edit(*i);
+            }
+            return Ok(());
+        }
+        KeyCode::BackTab => {
+            let Some(d) = app.detail.as_ref() else { return Ok(()); };
+            let prev_field = d.field.prev(d.comments.len());
+            if matches!(d.field, DetailField::ExistingComment(_)) {
+                app.save_comment_edit()?;
+            }
+            let Some(d) = app.detail.as_mut() else { return Ok(()); };
+            d.field = prev_field.clone();
+            d.detail_scroll = field_scroll_target(&prev_field);
+            if let DetailField::ExistingComment(i) = &prev_field {
+                app.enter_comment_edit(*i);
+            }
+            return Ok(());
+        }
+        KeyCode::Up if modifiers.contains(KeyModifiers::SHIFT) => {
+            if let Some(d) = app.detail.as_mut() {
+                d.detail_scroll = d.detail_scroll.saturating_sub(5);
+            }
+            return Ok(());
+        }
+        KeyCode::Down if modifiers.contains(KeyModifiers::SHIFT) => {
+            if let Some(d) = app.detail.as_mut() {
+                d.detail_scroll = d.detail_scroll.saturating_add(5);
+            }
+            return Ok(());
+        }
+        KeyCode::Up => {
+            if let Some(d) = app.detail.as_mut() {
+                d.detail_scroll = d.detail_scroll.saturating_sub(1);
+            }
+            return Ok(());
+        }
+        KeyCode::Down => {
+            if let Some(d) = app.detail.as_mut() {
+                d.detail_scroll = d.detail_scroll.saturating_add(1);
+            }
+            return Ok(());
+        }
+        KeyCode::Char('c') => {
+            if matches!(app.detail.as_ref().map(|d| &d.field), Some(DetailField::NewComment)) {
+                // already there — do nothing, fall through to edit
+            } else {
+                if let Some(d) = app.detail.as_mut() {
+                    if matches!(d.field, DetailField::ExistingComment(_)) {
+                        app.save_comment_edit()?;
+                    }
+                    if let Some(d) = app.detail.as_mut() {
+                        d.field = DetailField::NewComment;
+                        d.detail_scroll = field_scroll_target(&DetailField::NewComment);
+                    }
+                }
+                return Ok(());
+            }
+        }
+        KeyCode::Char('d') | KeyCode::Delete => {
+            let Some(d) = app.detail.as_ref() else { return Ok(()); };
+            if matches!(d.field, DetailField::ExistingComment(_)) {
+                app.delete_selected_comment()?;
+                return Ok(());
+            }
+        }
+        _ => {}
+    }
+
+    let Some(d) = app.detail.as_mut() else { return Ok(()); };
+    match d.field.clone() {
+        DetailField::Priority => match key {
+            KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') => {
+                d.priority = match d.priority {
+                    None     => Some(1),
+                    Some(1)  => Some(2),
+                    Some(2)  => Some(3),
+                    _        => None,
+                };
+            }
+            _ => {}
+        },
+        DetailField::Text => edit_field(&mut d.text, &mut d.text_cursor, key),
+        DetailField::Due  => edit_field(&mut d.due,  &mut d.due_cursor,  key),
+        DetailField::Url  => edit_field(&mut d.url,  &mut d.url_cursor,  key),
+        DetailField::NewComment => edit_field(&mut d.new_comment, &mut d.new_comment_cursor, key),
+        DetailField::ExistingComment(_) => edit_field(&mut d.comment_edit_text, &mut d.comment_edit_cursor, key),
+    }
+    Ok(())
+}
+
+fn edit_field(text: &mut String, cursor: &mut usize, key: KeyCode) {
+    match key {
+        KeyCode::Backspace => { if delete_char_before(text, *cursor) { *cursor -= 1; } }
+        KeyCode::Left  => { if *cursor > 0 { *cursor -= 1; } }
+        KeyCode::Right => { if *cursor < text.chars().count() { *cursor += 1; } }
+        KeyCode::Char(c) => { insert_char_at(text, *cursor, c); *cursor += 1; }
+        _ => {}
+    }
 }
 
 fn handle_due_popup(app: &mut App, key: KeyCode) -> Result<()> {

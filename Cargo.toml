@@ -19,3 +19,5 @@ tract-onnx = "0.21"
 tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
 ureq = { version = "2", features = ["tls"] }
 indicatif = { version = "0.17", features = ["improved_unicode"] }
+dirs = "6.0.0"
+rusqlite_migration = "1"

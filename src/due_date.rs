@@ -74,12 +74,18 @@ pub fn parse(input: &str) -> Result<Option<NaiveDate>, String> {
         return Ok(Some(today + Duration::days(days)));
     }
 
+    // DD-MM-YYYY (with - or . separator)
+    let normalized = lower.replace('.', "-");
+    if let Ok(d) = NaiveDate::parse_from_str(&normalized, "%d-%m-%Y") {
+        return Ok(Some(d));
+    }
+
     // YYYY-MM-DD
     if let Ok(d) = NaiveDate::parse_from_str(&lower, "%Y-%m-%d") {
         return Ok(Some(d));
     }
 
-    Err(format!("Can't parse: '{}'. Try: 3d, fri, eow, W16, 16w, 2026-04-20", s))
+    Err(format!("Can't parse: '{}'. Try: 3d, fri, eow, W16, 16w, 20-04-2026", s))
 }
 
 fn parse_weekday(s: &str) -> Option<Weekday> {

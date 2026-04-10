@@ -9,14 +9,6 @@ use ratatui::{
 use crate::app::{App, Focus};
 use super::focused_block;
 
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let cut: String = s.chars().take(max.saturating_sub(1)).collect();
-        format!("{}…", cut)
-    }
-}
 
 pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let focused = app.focus == Focus::Search;
@@ -77,18 +69,21 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
                     .and_then(|t| t.name.chars().next())
                     .filter(|c| !c.is_ascii());
 
-                let check = if todo.done { "[x]" } else { "[ ]" };
-                let icon_w = if topic_icon.is_some() { 3 } else { 0 }; // emoji + space
+                let (check, check_color) = if todo.done {
+                    ("[x]", Color::Green)
+                } else if todo.in_progress {
+                    ("[~]", Color::Yellow)
+                } else {
+                    ("[ ]", Color::White)
+                };
+                let icon_w = if topic_icon.is_some() { 3 } else { 0 };
                 let overhead = 7 + 4 + icon_w + 4;
                 let max_text = (area.width as usize).saturating_sub(overhead);
-                let display = truncate(&todo.text, max_text);
+                let display = super::truncate(&todo.text, max_text);
 
                 let mut spans = vec![
                     Span::styled(format!("{:.2} ", score), Style::default().fg(Color::Yellow)),
-                    Span::styled(
-                        format!("{} ", check),
-                        Style::default().fg(if todo.done { Color::Green } else { Color::White }),
-                    ),
+                    Span::styled(format!("{} ", check), Style::default().fg(check_color)),
                 ];
                 if let Some(icon) = topic_icon {
                     spans.push(Span::styled(format!("{} ", icon), Style::default().fg(Color::Magenta)));

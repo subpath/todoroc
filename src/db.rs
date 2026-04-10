@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite_migration::{Migrations, M};
 
 use crate::models::{Todo, Topic};
 
@@ -8,49 +9,57 @@ pub struct Database {
     conn: Connection,
 }
 
+const MIGRATIONS: &[M] = &[
+    M::up("
+        CREATE TABLE IF NOT EXISTS topics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            embedding BLOB
+        );
+        CREATE TABLE IF NOT EXISTS todos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            topic_id INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+            text TEXT NOT NULL,
+            done INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
+    "),
+    M::up("ALTER TABLE todos ADD COLUMN url TEXT;"),
+    M::up("ALTER TABLE todos ADD COLUMN due_date TEXT;"),
+    M::up("ALTER TABLE todos ADD COLUMN priority INTEGER;"),
+    M::up("ALTER TABLE todos ADD COLUMN in_progress INTEGER NOT NULL DEFAULT 0;"),
+    M::up("ALTER TABLE todos ADD COLUMN started_at TEXT;"),
+    M::up("ALTER TABLE todos ADD COLUMN completed_at TEXT;"),
+    M::up("
+        CREATE TABLE IF NOT EXISTS comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            todo_id INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+            text TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+    "),
+    M::up("ALTER TABLE comments ADD COLUMN url TEXT;"),
+];
+
 impl Database {
     pub fn open(path: &str) -> Result<Self> {
-        let conn = Connection::open(path)?;
-        let db = Self { conn };
-        db.init()?;
-        Ok(db)
-    }
+        let mut conn = Connection::open(path)?;
 
-    fn init(&self) -> Result<()> {
-        self.conn.execute_batch("
-            CREATE TABLE IF NOT EXISTS topics (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                embedding BLOB
-            );
+        // Bootstrap: existing databases used manual migrations with no version tracking.
+        // If user_version is 0 but the todos table already exists, fast-forward to the
+        // last migration that was already applied so rusqlite_migration doesn't re-run them.
+        let user_version: u32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        if user_version == 0 {
+            let version = detect_legacy_version(&conn)?;
+            if version > 0 {
+                conn.pragma_update(None, "user_version", version)?;
+            }
+        }
 
-            CREATE TABLE IF NOT EXISTS todos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                topic_id INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
-                text TEXT NOT NULL,
-                done INTEGER NOT NULL DEFAULT 0,
-                url TEXT,
-                embedding BLOB,
-                created_at TEXT NOT NULL
-            );
-        ")?;
-        // Migration: add url column for existing databases
-        let has_url: bool = self.conn.query_row(
-            "SELECT COUNT(*) > 0 FROM pragma_table_info('todos') WHERE name = 'url'",
-            [], |r| r.get(0),
-        )?;
-        if !has_url {
-            self.conn.execute("ALTER TABLE todos ADD COLUMN url TEXT", [])?;
-        }
-        // Migration: add due_date column
-        let has_due: bool = self.conn.query_row(
-            "SELECT COUNT(*) > 0 FROM pragma_table_info('todos') WHERE name = 'due_date'",
-            [], |r| r.get(0),
-        )?;
-        if !has_due {
-            self.conn.execute("ALTER TABLE todos ADD COLUMN due_date TEXT", [])?;
-        }
-        Ok(())
+        Migrations::new(MIGRATIONS.to_vec())
+            .to_latest(&mut conn)
+            .map_err(|e| anyhow::anyhow!("Migration failed: {e}"))?;
+        Ok(Self { conn })
     }
 
     // --- Topics ---
@@ -140,7 +149,7 @@ impl Database {
             params![topic_id, text, url, blob, now.to_rfc3339()],
         )?;
         let id = self.conn.last_insert_rowid();
-        Ok(Todo { id, topic_id, text: text.to_string(), done: false, url: url.map(|s| s.to_string()), due_date: None })
+        Ok(Todo { id, topic_id, text: text.to_string(), done: false, url: url.map(|s| s.to_string()), due_date: None, priority: None, in_progress: false })
     }
 
     pub fn set_todo_due_date(&self, id: i64, due_date: Option<&str>) -> Result<()> {
@@ -151,17 +160,87 @@ impl Database {
         Ok(())
     }
 
-    pub fn toggle_todo(&self, id: i64) -> Result<bool> {
+    pub fn set_todo_priority(&self, id: i64, priority: Option<u8>) -> Result<()> {
         self.conn.execute(
-            "UPDATE todos SET done = NOT done WHERE id = ?1",
-            params![id],
+            "UPDATE todos SET priority = ?1 WHERE id = ?2",
+            params![priority.map(|p| p as i64), id],
         )?;
-        let done: bool = self.conn.query_row(
-            "SELECT done FROM todos WHERE id = ?1",
-            params![id],
-            |row| row.get(0),
+        Ok(())
+    }
+
+    /// Returns all unfinished todos with a due_date in the past, with topic name.
+    pub fn overdue_todos(&self) -> Result<Vec<(Todo, String)>> {
+        let today = chrono::Local::now().date_naive().format("%Y-%m-%d").to_string();
+        let mut stmt = self.conn.prepare(
+            "SELECT t.id, t.topic_id, t.text, t.done, t.url, t.due_date, t.priority, tp.name, t.in_progress, t.started_at, t.completed_at
+             FROM todos t JOIN topics tp ON tp.id = t.topic_id
+             WHERE t.done = 0 AND t.due_date IS NOT NULL AND t.due_date < ?1
+             ORDER BY t.due_date"
         )?;
-        Ok(done)
+        let rows = stmt.query_map(params![today], |row| {
+            let todo = Todo {
+                id: row.get(0)?,
+                topic_id: row.get(1)?,
+                text: row.get(2)?,
+                done: row.get(3)?,
+                url: row.get(4)?,
+                due_date: row.get(5)?,
+                priority: row.get::<_, Option<i64>>(6)?.map(|p| p as u8),
+                in_progress: row.get(8)?,
+            };
+            let topic_name: String = row.get(7)?;
+            Ok((todo, topic_name))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("Failed to query overdue todos")?;
+        Ok(rows)
+    }
+
+    /// Cycles: todo → in_progress → done → todo. Returns (done, in_progress).
+    pub fn toggle_todo(&self, id: i64) -> Result<(bool, bool)> {
+        let (done, in_progress): (bool, bool) = self.conn.query_row(
+            "SELECT done, in_progress FROM todos WHERE id = ?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let now = Utc::now().to_rfc3339();
+        let (new_done, new_in_progress, started_at, completed_at): (bool, bool, Option<String>, Option<String>) =
+            match (done, in_progress) {
+                (false, false) => (false, true,  Some(now),  None),       // todo → in_progress
+                (false, true)  => (true,  false, None,       Some(now.clone())), // in_progress → done
+                _              => (false, false, None,       None),       // done → todo
+            };
+        self.conn.execute(
+            "UPDATE todos SET done = ?1, in_progress = ?2, started_at = COALESCE(?3, started_at), completed_at = ?4 WHERE id = ?5",
+            params![new_done, new_in_progress, started_at, completed_at, id],
+        )?;
+        // Clear started_at when going back to todo
+        if !new_done && !new_in_progress {
+            self.conn.execute(
+                "UPDATE todos SET started_at = NULL, completed_at = NULL WHERE id = ?1",
+                params![id],
+            )?;
+        }
+        Ok((new_done, new_in_progress))
+    }
+
+    /// Returns (in_progress_count, completed_count) in one query.
+    pub fn virtual_topic_counts(&self) -> Result<(i64, i64)> {
+        Ok(self.conn.query_row(
+            "SELECT SUM(in_progress), SUM(done) FROM todos",
+            [],
+            |r| Ok((r.get::<_, Option<i64>>(0)?.unwrap_or(0), r.get::<_, Option<i64>>(1)?.unwrap_or(0))),
+        )?)
+    }
+
+    /// Returns (created_at, started_at, completed_at) for a todo.
+    pub fn get_todo_timestamps(&self, id: i64) -> Result<(Option<String>, Option<String>, Option<String>)> {
+        let result = self.conn.query_row(
+            "SELECT created_at, started_at, completed_at FROM todos WHERE id = ?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).optional()?;
+        Ok(result.unwrap_or((None, None, None)))
     }
 
     pub fn delete_todo(&self, id: i64) -> Result<()> {
@@ -169,12 +248,32 @@ impl Database {
         Ok(())
     }
 
+    pub fn todos_in_progress(&self) -> Result<Vec<Todo>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, topic_id, text, done, url, due_date, priority, in_progress FROM todos WHERE in_progress = 1 ORDER BY started_at"
+        )?;
+        let todos = stmt.query_map([], |row| {
+            Ok(Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: row.get(4)?, due_date: row.get(5)?, priority: row.get(6)?, in_progress: row.get(7)? })
+        })?.collect::<rusqlite::Result<Vec<_>>>().context("Failed to list in-progress todos")?;
+        Ok(todos)
+    }
+
+    pub fn todos_completed(&self) -> Result<Vec<Todo>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, topic_id, text, done, url, due_date, priority, in_progress FROM todos WHERE done = 1 ORDER BY completed_at DESC"
+        )?;
+        let todos = stmt.query_map([], |row| {
+            Ok(Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: row.get(4)?, due_date: row.get(5)?, priority: row.get(6)?, in_progress: row.get(7)? })
+        })?.collect::<rusqlite::Result<Vec<_>>>().context("Failed to list completed todos")?;
+        Ok(todos)
+    }
+
     pub fn todos_for_topic(&self, topic_id: i64) -> Result<Vec<Todo>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, topic_id, text, done, url, due_date FROM todos WHERE topic_id = ?1 ORDER BY created_at"
+            "SELECT id, topic_id, text, done, url, due_date, priority, in_progress FROM todos WHERE topic_id = ?1 ORDER BY created_at"
         )?;
         let todos = stmt.query_map(params![topic_id], |row| {
-            Ok(Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: row.get(4)?, due_date: row.get(5)? })
+            Ok(Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: row.get(4)?, due_date: row.get(5)?, priority: row.get(6)?, in_progress: row.get(7)? })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("Failed to list todos")?;
@@ -208,11 +307,41 @@ impl Database {
             "SELECT id, topic_id, text, done, url, due_date FROM todos ORDER BY id"
         )?;
         let todos = stmt.query_map([], |row| {
-            Ok(Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: row.get(4)?, due_date: row.get(5)? })
+            Ok(Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: row.get(4)?, due_date: row.get(5)?, priority: None, in_progress: false })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("Failed to list all todos")?;
         Ok(todos)
+    }
+
+    pub fn get_comments_for_todo(&self, todo_id: i64) -> Result<Vec<crate::models::Comment>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, text, url, created_at FROM comments WHERE todo_id = ?1 ORDER BY created_at DESC"
+        )?;
+        let comments = stmt.query_map(params![todo_id], |row| {
+            Ok(crate::models::Comment { id: row.get(0)?, text: row.get(1)?, url: row.get(2)?, created_at: row.get(3)? })
+        })?.collect::<rusqlite::Result<Vec<_>>>().context("Failed to load comments")?;
+        Ok(comments)
+    }
+
+    pub fn insert_comment(&self, todo_id: i64, text: &str, url: Option<&str>) -> Result<crate::models::Comment> {
+        let now = Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO comments (todo_id, text, url, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![todo_id, text, url, now],
+        )?;
+        let id = self.conn.last_insert_rowid();
+        Ok(crate::models::Comment { id, text: text.to_string(), url: url.map(|s| s.to_string()), created_at: now })
+    }
+
+    pub fn update_comment(&self, id: i64, text: &str, url: Option<&str>) -> Result<()> {
+        self.conn.execute("UPDATE comments SET text = ?1, url = ?2 WHERE id = ?3", params![text, url, id])?;
+        Ok(())
+    }
+
+    pub fn delete_comment(&self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM comments WHERE id = ?1", params![id])?;
+        Ok(())
     }
 
     pub fn update_embedding(&self, todo_id: i64, embedding: &[f32]) -> Result<()> {
@@ -230,7 +359,7 @@ impl Database {
         )?;
         let todos = stmt.query_map([], |row| {
             let blob: Vec<u8> = row.get(4)?;
-            let todo = Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: None, due_date: None };
+            let todo = Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: None, due_date: None, priority: None, in_progress: false };
             let emb = decode_embedding(&blob);
             Ok((todo, emb))
         })?
@@ -238,6 +367,39 @@ impl Database {
         .context("Failed to load todos for search")?;
         Ok(todos)
     }
+}
+
+/// Inspects the schema of a legacy database (one with no user_version set) and returns
+/// the index of the last migration that has already been applied. The returned value is
+/// used to fast-forward rusqlite_migration's version counter so it doesn't re-run
+/// migrations that were previously handled manually.
+fn detect_legacy_version(conn: &Connection) -> Result<u32> {
+    let has_col = |table: &str, col: &str| -> Result<bool> {
+        Ok(conn.query_row(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name = ?2",
+            params![table, col],
+            |r| r.get(0),
+        )?)
+    };
+    let table_exists = |table: &str| -> Result<bool> {
+        Ok(conn.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name=?1",
+            params![table],
+            |r| r.get(0),
+        )?)
+    };
+
+    if !table_exists("todos")? { return Ok(0); }
+    // Migrations are numbered 1-based (user_version = number of applied migrations).
+    if has_col("comments", "url")? { return Ok(9); }
+    if table_exists("comments")? { return Ok(8); }
+    if has_col("todos", "completed_at")? { return Ok(7); }
+    if has_col("todos", "started_at")? { return Ok(6); }
+    if has_col("todos", "in_progress")? { return Ok(5); }
+    if has_col("todos", "priority")? { return Ok(4); }
+    if has_col("todos", "due_date")? { return Ok(3); }
+    if has_col("todos", "url")? { return Ok(2); }
+    Ok(1)
 }
 
 fn encode_embedding(v: &[f32]) -> Vec<u8> {

@@ -27,13 +27,95 @@ pub enum TodoSort {
 
 impl TodoSort {
     pub fn apply(self, todos: &mut Vec<crate::models::Todo>) {
-        // DB always returns todos in created_at order; a stable sort preserves that within buckets.
-        if self == TodoSort::Bucketed {
-            todos.sort_by_key(|t| t.done);
-        }
-        // Flat: already in created_at order from DB — nothing to do.
-    }
+        match self {
+            // Flat: keep DB inserted order — nothing to do (stable).
+            TodoSort::Flat => {}
 
+            // Bucketed: within each done/undone group:
+            //   sub-group 0 — has priority  → sort by priority, then due_date
+            //   sub-group 1 — due_date only  → sort by due_date
+            //   sub-group 2 — neither        → stable (DB added-date order)
+            TodoSort::Bucketed => {
+                let group = |t: &crate::models::Todo| -> u8 {
+                    if t.priority.is_some() { 0 }
+                    else if t.due_date.is_some() { 1 }
+                    else { 2 }
+                };
+                todos.sort_by(|a, b| {
+                    a.done.cmp(&b.done)
+                        .then_with(|| group(a).cmp(&group(b)))
+                        .then_with(|| match (group(a), group(b)) {
+                            (0, 0) => a.priority.cmp(&b.priority)
+                                        .then_with(|| a.due_date.cmp(&b.due_date)),
+                            (1, 1) => a.due_date.cmp(&b.due_date),
+                            _      => std::cmp::Ordering::Equal,
+                        })
+                });
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DetailField {
+    Text,
+    Priority,
+    Due,
+    Url,
+    NewComment,
+    ExistingComment(usize), // index into comments vec (0 = newest)
+}
+
+impl DetailField {
+    pub fn next(&self, comment_count: usize) -> Self {
+        match self {
+            Self::Text => Self::Priority,
+            Self::Priority => Self::Due,
+            Self::Due => Self::Url,
+            Self::Url => Self::NewComment,
+            Self::NewComment => {
+                if comment_count > 0 { Self::ExistingComment(0) } else { Self::Text }
+            }
+            Self::ExistingComment(i) => {
+                if i + 1 < comment_count { Self::ExistingComment(i + 1) } else { Self::Text }
+            }
+        }
+    }
+    pub fn prev(&self, comment_count: usize) -> Self {
+        match self {
+            Self::Text => {
+                if comment_count > 0 { Self::ExistingComment(comment_count - 1) } else { Self::NewComment }
+            }
+            Self::Priority => Self::Text,
+            Self::Due => Self::Priority,
+            Self::Url => Self::Due,
+            Self::NewComment => Self::Url,
+            Self::ExistingComment(0) => Self::NewComment,
+            Self::ExistingComment(i) => Self::ExistingComment(i - 1),
+        }
+    }
+}
+
+pub struct DetailState {
+    pub todo_id: i64,
+    pub field: DetailField,
+    pub text: String,
+    pub text_cursor: usize,
+    pub priority: Option<u8>,
+    pub due: String,
+    pub due_cursor: usize,
+    pub url: String,
+    pub url_cursor: usize,
+    pub created_at: Option<String>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    // Comments
+    pub comments: Vec<crate::models::Comment>,
+    pub new_comment: String,
+    pub new_comment_cursor: usize,
+    pub comment_edit_text: String,
+    pub comment_edit_cursor: usize,
+    pub detail_scroll: u16,
 }
 
 pub struct AppInfo {
@@ -68,17 +150,18 @@ pub struct App {
     pub due_popup: bool,
     pub due_input: String,
     pub due_cursor: usize,
+    pub detail: Option<DetailState>,
 }
 
 impl App {
     pub fn new(db: Database, embedder: Option<Embedder>, info: AppInfo) -> Result<Self> {
-        let topics = db.list_topics()?;
+        let mut topics = vec![
+            Topic { id: -1, name: "🔄 In Progress".to_string() },
+            Topic { id: -2, name: "✅ Completed".to_string() },
+        ];
+        topics.extend(db.list_topics()?);
         let topic_counts = db.topic_counts()?;
-        let mut todos = if topics.is_empty() {
-            vec![]
-        } else {
-            db.todos_for_topic(topics[0].id)?
-        };
+        let mut todos = db.todos_in_progress()?; // first topic is "In Progress"
         TodoSort::Bucketed.apply(&mut todos);
 
         Ok(Self {
@@ -107,11 +190,16 @@ impl App {
             due_popup: false,
             due_input: String::new(),
             due_cursor: 0,
+            detail: None,
         })
     }
 
     pub fn selected_topic_id(&self) -> Option<i64> {
         self.topics.get(self.selected_topic).map(|t| t.id)
+    }
+
+    pub fn is_virtual_topic(&self) -> bool {
+        matches!(self.selected_topic_id(), Some(-1) | Some(-2))
     }
 
     fn embed_with_status(&mut self, text: &str) -> Option<Vec<f32>> {
@@ -126,7 +214,12 @@ impl App {
     }
 
     pub fn reload_topics(&mut self) -> Result<()> {
-        self.topics = self.db.list_topics()?;
+        let mut topics = vec![
+            Topic { id: -1, name: "🔄 In Progress".to_string() },
+            Topic { id: -2, name: "✅ Completed".to_string() },
+        ];
+        topics.extend(self.db.list_topics()?);
+        self.topics = topics;
         if self.selected_topic >= self.topics.len() {
             self.selected_topic = self.topics.len().saturating_sub(1);
         }
@@ -135,16 +228,20 @@ impl App {
     }
 
     pub fn reload_todos(&mut self) -> Result<()> {
-        if let Some(id) = self.selected_topic_id() {
-            self.todos = self.db.todos_for_topic(id)?;
-        } else {
-            self.todos = vec![];
-        }
+        self.todos = match self.selected_topic_id() {
+            Some(-1) => self.db.todos_in_progress()?,
+            Some(-2) => self.db.todos_completed()?,
+            Some(id) => self.db.todos_for_topic(id)?,
+            None     => vec![],
+        };
         self.todo_sort.clone().apply(&mut self.todos);
         if self.selected_todo >= self.todos.len() {
             self.selected_todo = self.todos.len().saturating_sub(1);
         }
         self.topic_counts = self.db.topic_counts()?;
+        let (in_progress, completed) = self.db.virtual_topic_counts()?;
+        self.topic_counts.insert(-1, (in_progress, 0));
+        self.topic_counts.insert(-2, (completed, completed));
         Ok(())
     }
 
@@ -154,12 +251,13 @@ impl App {
             TodoSort::Bucketed => TodoSort::Flat,
             TodoSort::Flat => TodoSort::Bucketed,
         };
-        // Reload from DB to get canonical created_at order, then apply sort.
-        if let Some(id) = self.selected_topic_id() {
-            self.todos = self.db.todos_for_topic(id)?;
-        }
+        self.todos = match self.selected_topic_id() {
+            Some(-1) => self.db.todos_in_progress()?,
+            Some(-2) => self.db.todos_completed()?,
+            Some(id) => self.db.todos_for_topic(id)?,
+            None => vec![],
+        };
         self.todo_sort.clone().apply(&mut self.todos);
-        // Keep selection on the same item after re-sort.
         if let Some(id) = selected_id {
             if let Some(pos) = self.todos.iter().position(|t| t.id == id) {
                 self.selected_todo = pos;
@@ -180,11 +278,15 @@ impl App {
 
     pub fn update_todo(&mut self, text: &str) -> Result<()> {
         if let Some(todo) = self.todos.get(self.selected_todo) {
-            let url = extract_url(text);
+            let (clean, priority) = extract_priority(text);
+            let url = extract_url(&clean).or_else(|| todo.url.clone());
             let done = todo.done;
             let id = todo.id;
-            let embedding = self.embed_with_status(text);
-            self.db.update_todo_text_and_done(id, text, done, url.as_deref(), embedding.as_deref())?;
+            let embedding = self.embed_with_status(&clean);
+            self.db.update_todo_text_and_done(id, &clean, done, url.as_deref(), embedding.as_deref())?;
+            if priority.is_some() {
+                self.db.set_todo_priority(id, priority)?;
+            }
             self.reload_todos()?;
         }
         Ok(())
@@ -209,20 +311,43 @@ impl App {
 
     pub fn add_todo(&mut self, text: &str) -> Result<()> {
         if let Some(topic_id) = self.selected_topic_id() {
-            let url = extract_url(text);
-            let embedding = self.embed_with_status(text);
-            let todo = self.db.insert_todo(topic_id, text, url.as_deref(), embedding.as_deref())?;
+            let (clean, priority) = extract_priority(text);
+            let url = extract_url(&clean);
+            let embedding = self.embed_with_status(&clean);
+            let mut todo = self.db.insert_todo(topic_id, &clean, url.as_deref(), embedding.as_deref())?;
+            if priority.is_some() {
+                self.db.set_todo_priority(todo.id, priority)?;
+                todo.priority = priority;
+            }
             self.todos.push(todo);
             self.selected_todo = self.todos.len() - 1;
         }
         Ok(())
     }
 
+    pub fn cycle_priority(&mut self) -> Result<()> {
+        if let Some(todo) = self.todos.get(self.selected_todo) {
+            let next = match todo.priority {
+                None     => Some(1),
+                Some(1)  => Some(2),
+                Some(2)  => Some(3),
+                _        => None,
+            };
+            let id = todo.id;
+            self.db.set_todo_priority(id, next)?;
+            if let Some(t) = self.todos.get_mut(self.selected_todo) {
+                t.priority = next;
+            }
+        }
+        Ok(())
+    }
+
     pub fn toggle_todo(&mut self) -> Result<()> {
         if let Some(todo) = self.todos.get(self.selected_todo) {
-            let new_done = self.db.toggle_todo(todo.id)?;
+            let (new_done, new_in_progress) = self.db.toggle_todo(todo.id)?;
             if let Some(t) = self.todos.get_mut(self.selected_todo) {
                 t.done = new_done;
+                t.in_progress = new_in_progress;
             }
         }
         Ok(())
@@ -234,6 +359,73 @@ impl App {
             self.reload_todos()?;
         }
         Ok(())
+    }
+
+    pub fn open_detail(&mut self) {
+        let Some(todo) = self.todos.get(self.selected_todo) else { return };
+        let text = todo.text.clone();
+        let todo_id = todo.id;
+        let priority = todo.priority;
+        let due = todo.due_date.clone().unwrap_or_default();
+        let due_cursor = todo.due_date.as_deref().map(|s| s.chars().count()).unwrap_or(0);
+        let url = todo.url.clone().unwrap_or_default();
+        let url_cursor = todo.url.as_deref().map(|s| s.chars().count()).unwrap_or(0);
+        let (created_at, started_at, completed_at) = self.db.get_todo_timestamps(todo_id).unwrap_or((None, None, None));
+        let comments = self.db.get_comments_for_todo(todo_id).unwrap_or_default();
+        self.detail = Some(DetailState {
+            todo_id,
+            field: DetailField::Text,
+            text_cursor: 0,
+            text,
+            priority,
+            due,
+            due_cursor,
+            url,
+            url_cursor,
+            created_at,
+            started_at,
+            completed_at,
+            comments,
+            new_comment: String::new(),
+            new_comment_cursor: 0,
+            comment_edit_text: String::new(),
+            comment_edit_cursor: 0,
+            detail_scroll: 0,
+        });
+    }
+
+    pub fn confirm_detail(&mut self) -> Result<()> {
+        let Some(d) = &self.detail else { return Ok(()); };
+        let id = d.todo_id;
+
+        let due_date = if d.due.is_empty() {
+            Ok(None)
+        } else {
+            due_date::parse(&d.due).map(|opt| opt.map(|date| date.format("%Y-%m-%d").to_string()))
+        };
+        let due_date = match due_date {
+            Ok(v) => v,
+            Err(msg) => { self.status_message = Some(msg); return Ok(()); }
+        };
+
+        let text = d.text.clone();
+        let priority = d.priority;
+        let url = if d.url.is_empty() { None } else { Some(d.url.clone()) };
+
+        let embedding = self.embed_with_status(&text);
+        if let Some(todo) = self.todos.iter().find(|t| t.id == id) {
+            self.db.update_todo_text_and_done(id, &text, todo.done, url.as_deref(), embedding.as_deref())?;
+        }
+        self.db.set_todo_priority(id, priority)?;
+        self.db.set_todo_due_date(id, due_date.as_deref())?;
+
+        self.detail = None;
+        self.reload_todos()?;
+        Ok(())
+    }
+
+    pub fn close_detail(&mut self) {
+        self.detail = None;
     }
 
     pub fn open_due_popup(&mut self) {
@@ -323,6 +515,28 @@ impl App {
         Ok(())
     }
 
+    pub fn nav_top(&mut self) {
+        match self.focus {
+            Focus::Topics => {
+                self.selected_topic = 0;
+                let _ = self.reload_todos();
+            }
+            Focus::Todos => { self.selected_todo = 0; }
+            Focus::Search => { self.selected_search_result = 0; }
+        }
+    }
+
+    pub fn nav_bottom(&mut self) {
+        match self.focus {
+            Focus::Topics => {
+                self.selected_topic = self.topics.len().saturating_sub(1);
+                let _ = self.reload_todos();
+            }
+            Focus::Todos => { self.selected_todo = self.todos.len().saturating_sub(1); }
+            Focus::Search => { self.selected_search_result = self.search_results.len().saturating_sub(1); }
+        }
+    }
+
     pub fn nav_up(&mut self) {
         match self.focus {
             Focus::Topics => {
@@ -383,13 +597,88 @@ impl App {
         }
     }
 
+    pub fn save_new_comment(&mut self) -> Result<()> {
+        let Some(d) = &mut self.detail else { return Ok(()); };
+        let text = d.new_comment.trim().to_string();
+        if text.is_empty() { return Ok(()); }
+        let todo_id = d.todo_id;
+        let url = extract_url(&text);
+        let comment = self.db.insert_comment(todo_id, &text, url.as_deref())?;
+        let d = self.detail.as_mut().unwrap();
+        d.comments.insert(0, comment); // prepend (newest first)
+        d.new_comment.clear();
+        d.new_comment_cursor = 0;
+        Ok(())
+    }
+
+    pub fn delete_selected_comment(&mut self) -> Result<()> {
+        let Some(d) = &self.detail else { return Ok(()); };
+        let DetailField::ExistingComment(i) = d.field.clone() else { return Ok(()); };
+        let comment_id = d.comments[i].id;
+        let _comment_count = d.comments.len();
+        self.db.delete_comment(comment_id)?;
+        let d = self.detail.as_mut().unwrap();
+        d.comments.remove(i);
+        // Move focus
+        let new_count = d.comments.len();
+        d.field = if new_count == 0 {
+            DetailField::NewComment
+        } else if i < new_count {
+            DetailField::ExistingComment(i)
+        } else {
+            DetailField::ExistingComment(new_count - 1)
+        };
+        Ok(())
+    }
+
+    pub fn save_comment_edit(&mut self) -> Result<()> {
+        let Some(d) = &self.detail else { return Ok(()); };
+        let DetailField::ExistingComment(i) = d.field.clone() else { return Ok(()); };
+        let text = d.comment_edit_text.trim().to_string();
+        let comment_id = d.comments[i].id;
+        if text.is_empty() {
+            // treat as delete
+            self.db.delete_comment(comment_id)?;
+            let d = self.detail.as_mut().unwrap();
+            d.comments.remove(i);
+            let new_count = d.comments.len();
+            d.field = if new_count == 0 { DetailField::NewComment }
+                      else if i < new_count { DetailField::ExistingComment(i) }
+                      else { DetailField::ExistingComment(new_count - 1) };
+        } else {
+            let url = extract_url(&text);
+            self.db.update_comment(comment_id, &text, url.as_deref())?;
+            let d = self.detail.as_mut().unwrap();
+            d.comments[i].text = text;
+            d.comments[i].url = url;
+        }
+        Ok(())
+    }
+
+    /// Called when tabbing into ExistingComment(i) — loads edit buffer.
+    pub fn enter_comment_edit(&mut self, i: usize) {
+        let Some(d) = &mut self.detail else { return };
+        if i < d.comments.len() {
+            d.comment_edit_text = d.comments[i].text.clone();
+            d.comment_edit_cursor = d.comment_edit_text.chars().count();
+        }
+    }
+
     /// Open the URL of the currently focused item in the default browser.
     pub fn open_url(&mut self) {
-        let url = match self.focus {
-            Focus::Todos => self.todos.get(self.selected_todo).and_then(|t| t.url.clone()),
-            Focus::Search => self.search_results.get(self.selected_search_result)
-                .and_then(|(t, _)| t.url.clone()),
-            Focus::Topics => None,
+        let url = if let Some(d) = &self.detail {
+            if let DetailField::ExistingComment(i) = &d.field {
+                d.comments.get(*i).and_then(|c| c.url.clone())
+            } else {
+                if d.url.is_empty() { None } else { Some(d.url.clone()) }
+            }
+        } else {
+            match self.focus {
+                Focus::Todos => self.todos.get(self.selected_todo).and_then(|t| t.url.clone()),
+                Focus::Search => self.search_results.get(self.selected_search_result)
+                    .and_then(|(t, _)| t.url.clone()),
+                Focus::Topics => None,
+            }
         };
         match url {
             Some(u) => {
@@ -401,6 +690,23 @@ impl App {
             None => self.status_message = Some("No URL attached to this item".into()),
         }
     }
+}
+
+/// Extract !1/!2/!3 priority from text, returning (cleaned_text, priority).
+pub fn extract_priority(text: &str) -> (String, Option<u8>) {
+    let mut priority = None;
+    let cleaned = text.split_whitespace()
+        .filter(|w| {
+            match *w {
+                "!1" => { priority = Some(1); false }
+                "!2" => { priority = Some(2); false }
+                "!3" => { priority = Some(3); false }
+                _ => true,
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    (cleaned, priority)
 }
 
 /// Extract the first https:// URL found in a string.

@@ -40,19 +40,12 @@ struct DueDateIssue {
 #[derive(Debug, Deserialize)]
 struct JiraIssue {
     key: String,
-    #[serde(rename = "self")]
-    self_url: String,
     fields: Fields,
 }
 
 impl JiraIssue {
-    fn browse_url(&self) -> String {
-        // Convert https://host/rest/api/3/issue/ID → https://host/browse/KEY
-        let base = self.self_url
-            .split("/rest/")
-            .next()
-            .unwrap_or(&self.self_url);
-        format!("{}/browse/{}", base, self.key)
+    fn browse_url(&self, site_base: &str) -> String {
+        format!("{}/browse/{}", site_base, self.key)
     }
 
     fn is_done(&self) -> bool {
@@ -60,11 +53,33 @@ impl JiraIssue {
     }
 }
 
+/// Read the public Jira site hostname from ~/.config/acli/jira_config.yaml.
+fn fetch_site_base_url() -> Option<String> {
+    let config_path = dirs::home_dir()?.join(".config/acli/jira_config.yaml");
+    let content = std::fs::read_to_string(config_path).ok()?;
+    // Find current_profile value to match the right profile, then find its `site:` line.
+    // Simple heuristic: take the first `site:` value found (matches the active profile in most setups).
+    for line in content.lines() {
+        // Matches both `site: host` and `- site: host`
+        let trimmed = line.trim().trim_start_matches('-').trim();
+        if let Some(rest) = trimmed.strip_prefix("site:") {
+            let host = rest.trim().trim_matches('"').trim_matches('\'');
+            if !host.is_empty() {
+                return Some(format!("https://{}", host));
+            }
+        }
+    }
+    None
+}
+
 pub fn sync(db: &Database, embedder: Option<&Embedder>) -> Result<()> {
     // Remove legacy single-topic if it exists
     db.delete_topic_by_name("🎫 Jira")?;
 
     println!("Fetching Jira issues assigned to you...\n");
+
+    let site_base = fetch_site_base_url()
+        .context("Could not determine Jira site URL — run `acli jira site list` to verify acli is configured")?;
 
     let sprint_issues = fetch_issues(
         "assignee = currentUser() AND sprint in openSprints()"
@@ -78,8 +93,8 @@ pub fn sync(db: &Database, embedder: Option<&Embedder>) -> Result<()> {
     println!("  Backlog:         {}", backlog_issues.len());
     println!();
 
-    sync_topic(db, embedder, "🎫 Jira Sprint", &sprint_issues)?;
-    sync_topic(db, embedder, "🗂  Jira Backlog", &backlog_issues)?;
+    sync_topic(db, embedder, "🎫 Jira Sprint", &sprint_issues, &site_base)?;
+    sync_topic(db, embedder, "🗂  Jira Backlog", &backlog_issues, &site_base)?;
 
     println!("\nDone ✓  Open the app to see your todos.");
     Ok(())
@@ -119,7 +134,7 @@ fn fetch_due_dates(issues: &[JiraIssue]) -> HashMap<String, String> {
     map
 }
 
-fn sync_topic(db: &Database, embedder: Option<&Embedder>, topic_name: &str, issues: &[JiraIssue]) -> Result<()> {
+fn sync_topic(db: &Database, embedder: Option<&Embedder>, topic_name: &str, issues: &[JiraIssue], site_base: &str) -> Result<()> {
     let topic = db.find_or_create_topic(topic_name)?;
 
     let pb = ProgressBar::new(issues.len() as u64);
@@ -143,7 +158,7 @@ fn sync_topic(db: &Database, embedder: Option<&Embedder>, topic_name: &str, issu
         pb.set_message(issue.key.clone());
 
         let text = format!("{} {}", issue.key, issue.fields.summary);
-        let url = issue.browse_url();
+        let url = issue.browse_url(site_base);
         let done = issue.is_done();
         let prefix = format!("{} ", issue.key);
         let embedding = embedder.and_then(|e| e.embed(&issue.fields.summary).ok());

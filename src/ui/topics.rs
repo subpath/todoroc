@@ -3,25 +3,54 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{List, ListItem, ListState},
+    widgets::{Block, Borders, List, ListItem, ListState},
 };
 
 use crate::app::{App, Focus, Mode};
-use super::focused_block;
+use crate::due_date;
 
 pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
+
     let focused = app.focus == Focus::Topics;
-    let block = focused_block("Topics", focused);
+
+    let (total_all, total_done) = app.topic_counts.iter()
+        .filter(|(id, _)| **id > 0)
+        .fold((0i64, 0i64), |(ta, td), (_, (total, done))| (ta + total, td + done));
+
+    let stats_str = format!(" [{}/{}]", total_done, total_all);
+    let stats_color = if total_done == total_all && total_all > 0 { Color::Green } else { Color::Gray };
+
+    let border_style = if focused {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let dim = Style::default().fg(Color::from_u32(0x808080));
+
+    let block = Block::default()
+        .title(Line::from(vec![
+            Span::styled(" Topics", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled("  ·  ", dim),
+            Span::styled(due_date::current_date_label(), dim),
+            Span::styled("  ", dim),
+            Span::styled(due_date::current_week_label(), dim),
+            Span::styled(stats_str, Style::default().fg(stats_color)),
+            Span::raw(" "),
+        ]))
+        .borders(Borders::ALL)
+        .border_style(border_style);
 
     let mut items: Vec<ListItem> = app
         .topics
         .iter()
         .map(|t| {
             let (total, done) = app.topic_counts.get(&t.id).copied().unwrap_or((0, 0));
-            let count = Span::styled(
-                format!(" [{}/{}]", done, total),
-                Style::default().fg(if done == total && total > 0 { Color::Green } else { Color::Gray }),
-            );
+            let (count_str, count_color) = if t.id < 0 {
+                (format!(" [{}]", total), Color::Gray)
+            } else {
+                (format!(" [{}/{}]", done, total), if done == total && total > 0 { Color::Green } else { Color::Gray })
+            };
+            let count = Span::styled(count_str, Style::default().fg(count_color));
             ListItem::new(Line::from(vec![Span::raw(t.name.clone()), count]))
         })
         .collect();
