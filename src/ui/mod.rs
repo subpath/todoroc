@@ -11,6 +11,7 @@ use ratatui::{
 };
 
 use crate::app::{App, DetailField};
+use crate::sync::SyncKind;
 use crate::due_date;
 use chrono;
 
@@ -79,24 +80,20 @@ fn render_multiline_field(
 pub fn draw(frame: &mut Frame, app: &App) {
     let size = frame.area();
 
-    // Split vertically: main area + search bar
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(9)])
-        .split(size);
-
-    let main_area = vertical[0];
-    let search_area = vertical[1];
-
-    // Split main area horizontally: topics | todos
+    // Split horizontally: topics | todos  (full height — search is an overlay)
     let horizontal = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
-        .split(main_area);
+        .split(size);
 
+    let main_area = size;
     topics::draw(frame, app, horizontal[0]);
     todos::draw(frame, app, horizontal[1]);
-    search::draw(frame, app, search_area);
+
+    // Search overlay
+    if app.search_open {
+        search::draw(frame, app);
+    }
 
     // Status bar overlay at bottom of topics/todos area
     if let Some(msg) = &app.status_message {
@@ -193,7 +190,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         let block = Block::default()
             .title(Span::styled(" Item Detail ", Style::default().add_modifier(Modifier::BOLD)))
             .title_bottom(Span::styled(
-                " Tab:field  ↑↓:scroll  c:comment  Enter:save  Esc:cancel ",
+                " Tab:field  ↑↓:scroll  c:comment  ^Y:copy  Enter:save  Esc:cancel",
                 Style::default().fg(Color::DarkGray),
             ))
             .borders(Borders::ALL)
@@ -243,8 +240,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
         let pri_active = d.field == DetailField::Priority;
         let (pri_dot, pri_text, pri_color) = match d.priority {
             Some(1) => ("[!!] ", "High",   Color::Red),
-            Some(2) => ("[!]  ", "Medium", Color::Yellow),
-            Some(3) => ("[.]  ", "Low",    Color::Blue),
+            Some(2) => ("[!] ", "Medium", Color::Yellow),
+            Some(3) => ("[.] ", "Low",    Color::Blue),
             _       => ("[  ] ", "None",   Color::DarkGray),
         };
         let hint_txt = "  ←/→ to change";
@@ -390,7 +387,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     // Due date popup
     if app.due_popup {
-        let hint = "Enter:confirm  Esc:cancel  | 3d  fri  eow  W16  16w  DD-MM-YYYY  (empty=clear)";
+        let hint = "Enter:confirm  Esc:cancel  | 3d  3wd  fri  eow  W16  16w  DD-MM-YYYY  (empty=clear)";
         let dialog_w = 64u16.min(size.width.saturating_sub(4));
         let dialog_h = 6u16;
         let x = size.x + (size.width.saturating_sub(dialog_w)) / 2;
@@ -446,6 +443,118 @@ pub fn draw(frame: &mut Frame, app: &App) {
         frame.render_widget(Paragraph::new(text).block(block), area);
     }
 
+    // Sync popup
+    if app.sync_popup {
+        let options = [SyncKind::Full, SyncKind::GitHub, SyncKind::Jira];
+        let dialog_w = 46u16.min(size.width.saturating_sub(4));
+        let dialog_h = 7u16;
+        let x = size.x + (size.width.saturating_sub(dialog_w)) / 2;
+        let y = size.y + (size.height.saturating_sub(dialog_h)) / 2;
+        let area = Rect { x, y, width: dialog_w, height: dialog_h };
+
+        let block = Block::default()
+            .title(Span::styled(" Sync ", Style::default().add_modifier(Modifier::BOLD)))
+            .title_bottom(Span::styled(
+                " ↑↓:select  Enter:start  Esc:cancel ",
+                Style::default().fg(Color::DarkGray),
+            ))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+
+        let max_label = (dialog_w as usize).saturating_sub(6);
+        let mut lines: Vec<Line> = vec![Line::from("")];
+        for (i, kind) in options.iter().enumerate() {
+            let selected = i == app.sync_popup_selected;
+            let label = truncate(kind.label(), max_label);
+            let style = if selected {
+                Style::default().fg(Color::Black).bg(Color::White).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            let prefix = if selected { "> " } else { "  " };
+            lines.push(Line::from(Span::styled(format!("{}{}", prefix, label), style)));
+        }
+
+        frame.render_widget(Clear, area);
+        frame.render_widget(Paragraph::new(lines).block(block), area);
+    }
+
+    // Sync status indicator — small bordered box in bottom-right of main area
+    if let Some(ss) = &app.sync_status {
+        const SPINNER: [&str; 10] = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
+        let (icon, color) = if ss.error {
+            ("✗", Color::Red)
+        } else if ss.done {
+            ("✓", Color::Green)
+        } else {
+            (SPINNER[ss.spinner_frame % 10], Color::Cyan)
+        };
+
+        let msg = truncate(&ss.message, 34);
+        let dialog_w = (msg.chars().count() as u16 + 8).min(main_area.width.saturating_sub(2));
+        let dialog_h = 3u16;
+        let x = main_area.x + main_area.width.saturating_sub(dialog_w);
+        let y = main_area.y + main_area.height.saturating_sub(dialog_h);
+        let area = Rect { x, y, width: dialog_w, height: dialog_h };
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(color));
+
+        let text_color = if ss.done || ss.error { color } else { Color::White };
+        let line = Line::from(vec![
+            Span::styled(format!(" {} ", icon), Style::default().fg(color)),
+            Span::styled(msg, Style::default().fg(text_color)),
+        ]);
+
+        frame.render_widget(Clear, area);
+        frame.render_widget(Paragraph::new(line).block(block), area);
+    }
+
+    // Move popup
+    if app.move_popup {
+        let targets = app.move_popup_topics();
+        let inner_rows = targets.len().max(1) as u16;
+        let dialog_w = 50u16.min(size.width.saturating_sub(4));
+        let dialog_h = (inner_rows + 4).min(size.height.saturating_sub(4));
+        let x = size.x + (size.width.saturating_sub(dialog_w)) / 2;
+        let y = size.y + (size.height.saturating_sub(dialog_h)) / 2;
+        let area = Rect { x, y, width: dialog_w, height: dialog_h };
+
+        let block = Block::default()
+            .title(Span::styled(" Move to Topic ", Style::default().add_modifier(Modifier::BOLD)))
+            .title_bottom(Span::styled(
+                " ↑↓:select  Enter:move  Esc:cancel ",
+                Style::default().fg(Color::DarkGray),
+            ))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+
+        let max_name = (dialog_w as usize).saturating_sub(6);
+        let mut lines: Vec<Line> = vec![Line::from("")];
+        if targets.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  No other topics",
+                Style::default().fg(Color::DarkGray),
+            )));
+        } else {
+            for (i, topic) in targets.iter().enumerate() {
+                let selected = i == app.move_popup_selected;
+                let name = truncate(&topic.name, max_name);
+                let style = if selected {
+                    Style::default().fg(Color::Black).bg(Color::White).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                let prefix = if selected { "> " } else { "  " };
+                lines.push(Line::from(Span::styled(format!("{}{}", prefix, name), style)));
+            }
+        }
+
+        frame.render_widget(Clear, area);
+        frame.render_widget(Paragraph::new(lines).block(block), area);
+    }
+
     // Quit confirmation dialog
     if app.confirm_quit {
         let dialog_w = 36u16;
@@ -470,19 +579,4 @@ pub fn draw(frame: &mut Frame, app: &App) {
         frame.render_widget(Clear, area);
         frame.render_widget(Paragraph::new(text).block(block).alignment(Alignment::Center), area);
     }
-}
-
-pub fn focused_block(title: &str, focused: bool) -> Block<'_> {
-    let border_style = if focused {
-        Style::default().fg(Color::Cyan)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-    Block::default()
-        .title(Span::styled(
-            format!(" {} ", title),
-            Style::default().add_modifier(Modifier::BOLD),
-        ))
-        .borders(Borders::ALL)
-        .border_style(border_style)
 }

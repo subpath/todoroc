@@ -6,7 +6,10 @@ mod github;
 mod jira;
 mod models;
 mod setup;
+mod sync;
 mod ui;
+
+use tract_nnef;
 
 use std::{
     fs,
@@ -24,6 +27,8 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use app::{App, AppInfo, DetailField, Focus, Mode};
+use std::time::Instant;
+use sync::SyncKind;
 use db::Database;
 use embeddings::Embedder;
 
@@ -55,6 +60,19 @@ fn main() -> Result<()> {
     // --setup  →  download default model (kept for backwards compat)
     if args.iter().any(|a| a == "--setup") {
         setup::download_model(&dir.join("model"), "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")?;
+        return Ok(());
+    }
+
+    // --compile-model  →  compile ONNX → NNEF cache (run via debug/cargo run to avoid OOM)
+    if args.iter().any(|a| a == "--compile-model") {
+        let model_dir = dir.join("model");
+        println!("Compiling model (this may take a minute and uses significant RAM)...");
+        let typed = embeddings::Embedder::compile_onnx(&model_dir)?;
+        let nnef_path = model_dir.join("model.nnef");
+        tract_nnef::nnef().write_to_dir(&typed, &nnef_path)
+            .map_err(|e| anyhow::anyhow!("Failed to save compiled model: {e}"))?;
+        println!("Compiled model saved to {}", nnef_path.display());
+        println!("The `todo` binary will now load instantly without this step.");
         return Ok(());
     }
 
@@ -167,6 +185,18 @@ fn main() -> Result<()> {
     // Overdue digest
     show_overdue_digest(&app)?;
 
+    // Restore terminal on panic so the error is actually readable
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = crossterm::terminal::disable_raw_mode();
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            crossterm::terminal::LeaveAlternateScreen,
+            crossterm::event::DisableMouseCapture,
+        );
+        original_hook(info);
+    }));
+
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -220,6 +250,16 @@ fn run_loop(
     app: &mut App,
 ) -> Result<()> {
     loop {
+        app.poll_sync()?;
+
+        // Fire debounced search ~250 ms after the last query keystroke
+        if let Some(t) = app.search_debounce {
+            if t.elapsed() >= Duration::from_millis(100) {
+                app.search_debounce = None;
+                app.run_search()?;
+            }
+        }
+
         terminal.draw(|f| ui::draw(f, app))?;
 
         if !event::poll(Duration::from_millis(100))? {
@@ -235,10 +275,16 @@ fn run_loop(
                 handle_confirm_delete(app, key.code)?;
             } else if app.show_info {
                 app.show_info = false;
+            } else if app.sync_popup {
+                handle_sync_popup(app, key.code)?;
             } else if app.due_popup {
                 handle_due_popup(app, key.code)?;
+            } else if app.move_popup {
+                handle_move_popup(app, key.code)?;
             } else if app.detail.is_some() {
                 handle_detail(app, key.code, key.modifiers)?;
+            } else if app.search_open {
+                handle_search_overlay(app, key.code)?;
             } else {
                 match app.mode {
                     Mode::Normal => handle_normal(app, key.code, key.modifiers)?,
@@ -290,6 +336,49 @@ fn delete_char_before(s: &mut String, pos: usize) -> bool {
     }
 }
 
+fn handle_search_overlay(app: &mut App, key: KeyCode) -> Result<()> {
+    match key {
+        KeyCode::Esc => {
+            app.search_open = false;
+        }
+        KeyCode::Enter => {
+            if !app.search_results.is_empty() {
+                app.search_open = false;
+                app.jump_to_search_result()?;
+            } else if !app.search_query.is_empty() {
+                app.search_debounce = None;
+                app.run_search()?;
+            }
+        }
+        KeyCode::Up => {
+            if app.selected_search_result > 0 {
+                app.selected_search_result -= 1;
+            }
+        }
+        KeyCode::Down => {
+            if app.selected_search_result + 1 < app.search_results.len() {
+                app.selected_search_result += 1;
+            }
+        }
+        KeyCode::Backspace => {
+            app.search_query.pop();
+            if app.search_query.is_empty() {
+                app.search_results.clear();
+                app.selected_search_result = 0;
+                app.search_debounce = None;
+            } else {
+                app.search_debounce = Some(Instant::now());
+            }
+        }
+        KeyCode::Char(c) => {
+            app.search_query.push(c);
+            app.search_debounce = Some(Instant::now());
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
     match key {
         KeyCode::Char('q') => app.confirm_quit = true,
@@ -297,20 +386,17 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
 
         KeyCode::Char('1') => { app.focus = Focus::Topics; app.mode = Mode::Normal; }
         KeyCode::Char('2') => { app.focus = Focus::Todos; app.mode = Mode::Normal; }
-        KeyCode::Char('3') => app.focus = Focus::Search,
 
         KeyCode::Tab => {
             app.focus = match app.focus {
                 Focus::Topics => Focus::Todos,
-                Focus::Todos => Focus::Search,
-                Focus::Search => Focus::Topics,
+                Focus::Todos  => Focus::Topics,
             };
         }
         KeyCode::BackTab => {
             app.focus = match app.focus {
-                Focus::Topics => Focus::Search,
-                Focus::Todos => Focus::Topics,
-                Focus::Search => Focus::Todos,
+                Focus::Topics => Focus::Todos,
+                Focus::Todos  => Focus::Topics,
             };
         }
 
@@ -319,20 +405,27 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
         KeyCode::Down if modifiers.contains(KeyModifiers::SHIFT) => app.nav_bottom(),
         KeyCode::Up | KeyCode::Char('k') => app.nav_up(),
         KeyCode::Down | KeyCode::Char('j') => app.nav_down(),
-        KeyCode::Left  => { app.focus = match app.focus { Focus::Todos | Focus::Search => Focus::Topics, f => f }; }
-        KeyCode::Right => { app.focus = match app.focus { Focus::Topics | Focus::Search => Focus::Todos,  f => f }; }
+        KeyCode::Left  => { if app.focus == Focus::Todos  { app.focus = Focus::Topics; } }
+        KeyCode::Right => { if app.focus == Focus::Topics { app.focus = Focus::Todos;  } }
 
-        // Actions — n enters insert in all panels
+        // / opens the search overlay
+        KeyCode::Char('/') => {
+            app.search_open = true;
+            app.search_query.clear();
+            app.search_results.clear();
+            app.selected_search_result = 0;
+            app.search_debounce = None;
+        }
+
+        // Actions — n enters insert mode
         KeyCode::Char('n') => {
             if app.focus == Focus::Todos && app.is_virtual_topic() {
                 app.status_message = Some("Cannot add todos to virtual topics".into());
             } else {
                 app.mode = Mode::Insert;
-                if app.focus != Focus::Search {
-                    app.input.clear();
-                    app.cursor_pos = 0;
-                    app.editing = false;
-                }
+                app.input.clear();
+                app.cursor_pos = 0;
+                app.editing = false;
             }
         }
 
@@ -354,7 +447,6 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
                         app.mode = Mode::Insert;
                     }
                 }
-                _ => {}
             }
         }
 
@@ -377,8 +469,6 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
         KeyCode::Enter => {
             if app.focus == Focus::Todos && !app.todos.is_empty() {
                 app.open_detail();
-            } else if app.focus == Focus::Search && !app.search_results.is_empty() {
-                app.jump_to_search_result()?;
             }
         }
 
@@ -401,6 +491,14 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
                 app.cycle_priority()?;
             }
         }
+
+        KeyCode::Char('m') => {
+            if app.focus == Focus::Todos && !app.todos.is_empty() {
+                app.open_move_popup();
+            }
+        }
+
+        KeyCode::Char('S') => app.open_sync_popup(),
 
         _ => {}
     }
@@ -489,6 +587,27 @@ fn handle_detail(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
             }
             return Ok(());
         }
+        KeyCode::Char('y') if modifiers.contains(KeyModifiers::CONTROL) => {
+            if let Some(d) = app.detail.as_ref() {
+                let text = match &d.field {
+                    DetailField::Text => d.text.clone(),
+                    DetailField::Priority => match d.priority {
+                        Some(1) => "High".to_string(),
+                        Some(2) => "Medium".to_string(),
+                        Some(3) => "Low".to_string(),
+                        _ => String::new(),
+                    },
+                    DetailField::Due => d.due.clone(),
+                    DetailField::Url => d.url.clone(),
+                    DetailField::NewComment => d.new_comment.clone(),
+                    DetailField::ExistingComment(_) => d.comment_edit_text.clone(),
+                };
+                if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                    let _ = clipboard.set_text(text);
+                }
+            }
+            return Ok(());
+        }
         KeyCode::Char('c') => {
             if matches!(app.detail.as_ref().map(|d| &d.field), Some(DetailField::NewComment)) {
                 // already there — do nothing, fall through to edit
@@ -571,6 +690,48 @@ fn handle_due_popup(app: &mut App, key: KeyCode) -> Result<()> {
     Ok(())
 }
 
+fn handle_sync_popup(app: &mut App, key: KeyCode) -> Result<()> {
+    match key {
+        KeyCode::Esc => app.close_sync_popup(),
+        KeyCode::Enter => {
+            let kind = match app.sync_popup_selected {
+                0 => SyncKind::Full,
+                1 => SyncKind::GitHub,
+                _ => SyncKind::Jira,
+            };
+            app.start_sync(kind);
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.sync_popup_selected > 0 { app.sync_popup_selected -= 1; }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.sync_popup_selected < 2 { app.sync_popup_selected += 1; }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn handle_move_popup(app: &mut App, key: KeyCode) -> Result<()> {
+    match key {
+        KeyCode::Esc => app.close_move_popup(),
+        KeyCode::Enter => app.confirm_move_todo()?,
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.move_popup_selected > 0 {
+                app.move_popup_selected -= 1;
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            let count = app.move_popup_topics().len();
+            if app.move_popup_selected + 1 < count {
+                app.move_popup_selected += 1;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn handle_insert(app: &mut App, key: KeyCode) -> Result<()> {
     match key {
         KeyCode::Esc => {
@@ -581,71 +742,42 @@ fn handle_insert(app: &mut App, key: KeyCode) -> Result<()> {
         }
 
         KeyCode::Enter => {
-            let text = if app.focus == Focus::Search {
-                app.search_query.clone()
-            } else {
-                app.input.clone()
-            };
-
+            let text = app.input.clone();
             if !text.is_empty() {
                 match app.focus {
                     Focus::Topics => {
-                        if app.editing {
-                            app.update_topic(&text)?;
-                        } else {
-                            app.add_topic(&text)?;
-                        }
+                        if app.editing { app.update_topic(&text)?; }
+                        else           { app.add_topic(&text)?; }
                     }
                     Focus::Todos => {
-                        if app.editing {
-                            app.update_todo(&text)?;
-                        } else {
-                            app.add_todo(&text)?;
-                        }
-                    }
-                    Focus::Search => {
-                        app.run_search()?;
+                        if app.editing { app.update_todo(&text)?; }
+                        else           { app.add_todo(&text)?; }
                     }
                 }
             }
-
-            if app.focus == Focus::Search {
-                app.mode = Mode::Normal; // switch to normal so arrows navigate results
-            } else {
-                app.mode = Mode::Normal;
-                app.input.clear();
-                app.cursor_pos = 0;
-                app.editing = false;
-            }
+            app.mode = Mode::Normal;
+            app.input.clear();
+            app.cursor_pos = 0;
+            app.editing = false;
         }
 
         KeyCode::Backspace => {
-            if app.focus == Focus::Search {
-                app.search_query.pop();
-            } else if delete_char_before(&mut app.input, app.cursor_pos) {
+            if delete_char_before(&mut app.input, app.cursor_pos) {
                 app.cursor_pos -= 1;
             }
         }
 
         KeyCode::Left => {
-            if app.focus != Focus::Search && app.cursor_pos > 0 {
-                app.cursor_pos -= 1;
-            }
+            if app.cursor_pos > 0 { app.cursor_pos -= 1; }
         }
 
         KeyCode::Right => {
-            if app.focus != Focus::Search && app.cursor_pos < app.input.chars().count() {
-                app.cursor_pos += 1;
-            }
+            if app.cursor_pos < app.input.chars().count() { app.cursor_pos += 1; }
         }
 
         KeyCode::Char(c) => {
-            if app.focus == Focus::Search {
-                app.search_query.push(c);
-            } else {
-                insert_char_at(&mut app.input, app.cursor_pos, c);
-                app.cursor_pos += 1;
-            }
+            insert_char_at(&mut app.input, app.cursor_pos, c);
+            app.cursor_pos += 1;
         }
 
         _ => {}

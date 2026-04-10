@@ -28,6 +28,21 @@ pub fn parse(input: &str) -> Result<Option<NaiveDate>, String> {
         return Ok(Some(today + Duration::days(days_to_fri)));
     }
 
+    // "Nwd" — N working days from now (skipping weekends)
+    if let Some(n_str) = lower.strip_suffix("wd") {
+        if let Ok(n) = n_str.parse::<u32>() {
+            let mut date = today;
+            let mut remaining = n;
+            while remaining > 0 {
+                date = date + Duration::days(1);
+                if date.weekday().num_days_from_monday() < 5 {
+                    remaining -= 1;
+                }
+            }
+            return Ok(Some(date));
+        }
+    }
+
     // "Nd" — N days from now
     if let Some(n_str) = lower.strip_suffix('d') {
         if let Ok(n) = n_str.parse::<i64>() {
@@ -80,12 +95,17 @@ pub fn parse(input: &str) -> Result<Option<NaiveDate>, String> {
         return Ok(Some(d));
     }
 
+    // DD-MM without year — use current year
+    if let Ok(d) = NaiveDate::parse_from_str(&format!("{}-{}", normalized, today.year()), "%d-%m-%Y") {
+        return Ok(Some(d));
+    }
+
     // YYYY-MM-DD
     if let Ok(d) = NaiveDate::parse_from_str(&lower, "%Y-%m-%d") {
         return Ok(Some(d));
     }
 
-    Err(format!("Can't parse: '{}'. Try: 3d, fri, eow, W16, 16w, 20-04-2026", s))
+    Err(format!("Can't parse: '{}'. Try: 3d, 3wd, fri, eow, W16, 16w, 20-04-2026", s))
 }
 
 fn parse_weekday(s: &str) -> Option<Weekday> {

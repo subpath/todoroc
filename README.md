@@ -10,16 +10,19 @@ A terminal-based todo manager with semantic search, GitHub, and Jira integration
 
 ## Features
 
-- **Multi-pane TUI** — topics list, todos list, and search panel
-- **Virtual topics** — built-in "🔄 In Progress" and "✅ Completed" aggregate views across all topics
+- **Multi-pane TUI** — topics list and todos list; search is a floating overlay (`/`)
+- **Virtual topics** — built-in "🔄 In Progress", "✅ Completed", and "📅 Due This Week" aggregate views across all topics
 - **Detail panel** — press `Enter` to open a full editor: text, priority, due date, URL, timestamps, and comments
 - **Comments** — attach threaded comments to any todo from the detail panel
 - **Priority levels** — inline `!1`/`!2`/`!3` syntax or `p` key to cycle; color-coded and sorted above other todos
+- **Move todos** — `m` key moves the selected todo to any other topic via a popup
+- **Background sync** — `S` opens a sync popup (Full / GitHub / Jira); runs in a background thread with a live spinner status
 - **Overdue digest** — summary of overdue items printed on launch before opening the TUI
-- **Semantic search** — AI-powered search across all todos using local ONNX embeddings (no cloud)
+- **Semantic search** — AI-powered search overlay with debounced live results; no cloud needed (local ONNX embeddings)
 - **Due dates** — set due dates with natural language input, shown inline with color-coded urgency
 - **GitHub sync** — pulls your open PRs and pending review requests via `gh` CLI
 - **Jira sync** — pulls sprint and backlog items via Atlassian `acli`, including due dates set in Jira
+- **Clipboard copy** — `Ctrl+Y` in the detail panel copies the focused field to the clipboard
 - **SQLite storage** — all data stored locally in `~/.todo-tui/todos.db`
 - **URL support** — attach and open URLs directly from todos (`o` to open in browser)
 
@@ -51,6 +54,7 @@ todo [OPTIONS]
 Options:
   --setup              Download default embedding model
   --model <hf-repo>    Download and activate a Hugging Face ONNX model
+  --compile-model      Compile the ONNX model to an NNEF cache for faster startup
   --reindex            Re-embed all todos with the current model
   --clear-db           Delete all data (with confirmation)
   --sync               Full sync: GitHub + Jira + reindex
@@ -69,6 +73,7 @@ Options:
 | `e` | Edit selected todo inline |
 | `p` | Cycle priority: none → `!1` → `!2` → `!3` → none |
 | `d` | Delete selected todo |
+| `m` | Move selected todo to another topic |
 | `@` | Set due date |
 | `Space` | Toggle completion (tracks started/completed timestamps) |
 | `o` | Open attached URL in browser |
@@ -78,16 +83,27 @@ Options:
 
 | Key | Action |
 |-----|--------|
-| `Tab` / `Shift+Tab` | Cycle focus between panels |
-| `1` / `2` / `3` | Focus Topics / Todos / Search |
+| `Tab` / `Shift+Tab` | Cycle focus between Topics and Todos |
+| `1` / `2` | Focus Topics / Todos |
 | `↑↓` / `jk` | Navigate |
 | `Shift+↑` / `Shift+↓` | Jump to top / bottom |
-| `n` | New topic / search query |
+| `/` | Open search overlay |
+| `S` | Open sync popup (Full / GitHub / Jira) |
+| `n` | New topic (when Topics focused) |
 | `e` | Edit selected topic |
 | `d` | Delete selected topic |
-| `Enter` | Save or execute search |
 | `i` | Info popup (model, DB stats) |
 | `q` | Quit |
+
+### Search overlay
+
+| Key | Action |
+|-----|--------|
+| *type* | Query — results update live after a short pause |
+| `↑↓` | Navigate results |
+| `Enter` | Jump to the selected result's topic and todo |
+| `o` | Open URL attached to the selected result |
+| `Esc` | Close overlay |
 
 ### Detail panel
 
@@ -95,6 +111,7 @@ Options:
 |-----|--------|
 | `Tab` / `Shift+Tab` | Move between fields |
 | `Enter` | Save (on text/due/URL fields); submit new comment |
+| `Ctrl+Y` | Copy current field value to clipboard |
 | `Esc` | Close without saving |
 | `↑↓` | Scroll detail view |
 | `Shift+↑` / `Shift+↓` | Scroll by 5 lines |
@@ -126,10 +143,11 @@ Jira due dates are pulled automatically on sync.
 
 ## Virtual Topics
 
-The first two entries in the topics list are always:
+The first three entries in the topics list are always:
 
 - **🔄 In Progress** — all todos that have been started but not yet completed, across every topic
 - **✅ Completed** — all completed todos, across every topic
+- **📅 Due This Week** — all unfinished todos due on or before the end of the current ISO week
 
 These are read-only views; new todos cannot be added to them directly.
 
@@ -160,13 +178,15 @@ On launch, if any todos are overdue, a summary is printed to the terminal before
 
 ## Search
 
-Semantic search returns up to 7 unfinished results followed by up to 5 finished results, both sorted by relevance score.
+Press `/` to open the search overlay. Results update automatically as you type (debounced ~100 ms). Semantic search returns up to 7 unfinished results followed by up to 5 finished results, both sorted by relevance score. Press `Enter` on a result to jump directly to that todo in its topic, or `Esc` to dismiss.
 
 ## Integrations
 
 **GitHub** — requires [`gh`](https://cli.github.com/) installed and authenticated. Syncs open PRs and review requests into dedicated topics.
 
 **Jira** — requires [`acli`](https://bobswift.atlassian.net/wiki/spaces/ACLI/overview) installed and authenticated. Syncs sprint and backlog items, including due dates.
+
+Sync can be triggered interactively with `S` inside the TUI. A popup lets you choose Full (GitHub + Jira + reindex), GitHub only, or Jira only. Sync runs in a background thread; a spinner in the bottom-right corner shows progress and turns green on completion.
 
 ## Development
 
@@ -187,3 +207,5 @@ make clean     # Remove build artifacts
 | `~/.todo-tui/model_name.txt` | Active model name |
 
 The default embedding model is `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`. Any Hugging Face ONNX-compatible model can be used via `--model`.
+
+Run `todo --compile-model` once after setup to compile the ONNX model to an NNEF cache (`model.nnef`). Subsequent launches load the cached model and start significantly faster.

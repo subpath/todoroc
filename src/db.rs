@@ -353,13 +353,53 @@ impl Database {
         Ok(())
     }
 
+    /// Returns all undone todos due this week (overdue through Sunday), ordered by due_date.
+    pub fn todos_due_this_week(&self) -> Result<Vec<Todo>> {
+        let end = end_of_week().format("%Y-%m-%d").to_string();
+        let mut stmt = self.conn.prepare(
+            "SELECT id, topic_id, text, done, url, due_date, priority, in_progress FROM todos WHERE done = 0 AND due_date IS NOT NULL AND due_date <= ?1 ORDER BY due_date"
+        )?;
+        let todos = stmt.query_map(params![end], |row| {
+            Ok(Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: row.get(4)?, due_date: row.get(5)?, priority: row.get(6)?, in_progress: row.get(7)? })
+        })?.collect::<rusqlite::Result<Vec<_>>>().context("Failed to list due-this-week todos")?;
+        Ok(todos)
+    }
+
+    /// Returns the count of undone todos due this week (overdue through Sunday).
+    pub fn due_this_week_count(&self) -> Result<i64> {
+        let end = end_of_week().format("%Y-%m-%d").to_string();
+        Ok(self.conn.query_row(
+            "SELECT COUNT(*) FROM todos WHERE done = 0 AND due_date IS NOT NULL AND due_date <= ?1",
+            params![end],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// Move a todo to a different topic.
+    pub fn move_todo_to_topic(&self, todo_id: i64, new_topic_id: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE todos SET topic_id = ?1 WHERE id = ?2",
+            params![new_topic_id, todo_id],
+        )?;
+        Ok(())
+    }
+
     pub fn all_todos_with_embeddings(&self) -> Result<Vec<(Todo, Vec<f32>)>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, topic_id, text, done, embedding, created_at FROM todos WHERE embedding IS NOT NULL ORDER BY created_at"
+            "SELECT id, topic_id, text, done, embedding, url, due_date, priority, in_progress FROM todos WHERE embedding IS NOT NULL ORDER BY id"
         )?;
         let todos = stmt.query_map([], |row| {
             let blob: Vec<u8> = row.get(4)?;
-            let todo = Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: None, due_date: None, priority: None, in_progress: false };
+            let todo = Todo {
+                id: row.get(0)?,
+                topic_id: row.get(1)?,
+                text: row.get(2)?,
+                done: row.get(3)?,
+                url: row.get(5)?,
+                due_date: row.get(6)?,
+                priority: row.get(7)?,
+                in_progress: row.get(8)?,
+            };
             let emb = decode_embedding(&blob);
             Ok((todo, emb))
         })?
@@ -400,6 +440,13 @@ fn detect_legacy_version(conn: &Connection) -> Result<u32> {
     if has_col("todos", "due_date")? { return Ok(3); }
     if has_col("todos", "url")? { return Ok(2); }
     Ok(1)
+}
+
+fn end_of_week() -> chrono::NaiveDate {
+    use chrono::Datelike;
+    let today = chrono::Local::now().date_naive();
+    let days_to_sunday = 6 - today.weekday().num_days_from_monday() as i64;
+    today + chrono::Duration::days(days_to_sunday)
 }
 
 fn encode_embedding(v: &[f32]) -> Vec<u8> {

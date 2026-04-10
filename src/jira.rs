@@ -100,6 +100,53 @@ pub fn sync(db: &Database, embedder: Option<&Embedder>) -> Result<()> {
     Ok(())
 }
 
+pub fn sync_headless(db: &Database, embedder: Option<&Embedder>, report: &dyn Fn(&str)) -> Result<()> {
+    db.delete_topic_by_name("🎫 Jira")?;
+    report("Jira: fetching issues…");
+
+    let site_base = fetch_site_base_url()
+        .context("Could not determine Jira site URL — run `acli jira site list` to verify acli is configured")?;
+
+    let sprint_issues = fetch_issues(
+        "assignee = currentUser() AND sprint in openSprints()"
+    )?;
+    let backlog_issues = fetch_issues(
+        "assignee = currentUser() AND statusCategory != Done AND (sprint is EMPTY OR sprint not in openSprints())"
+    )?;
+
+    report(&format!("Jira: {} sprint, {} backlog", sprint_issues.len(), backlog_issues.len()));
+    sync_topic_headless(db, embedder, "🎫 Jira Sprint", &sprint_issues, &site_base)?;
+    sync_topic_headless(db, embedder, "🗂  Jira Backlog", &backlog_issues, &site_base)?;
+    Ok(())
+}
+
+fn sync_topic_headless(db: &Database, embedder: Option<&Embedder>, topic_name: &str, issues: &[JiraIssue], site_base: &str) -> Result<()> {
+    let topic = db.find_or_create_topic(topic_name)?;
+    let due_dates = fetch_due_dates(issues);
+
+    for issue in issues {
+        let text   = format!("{} {}", issue.key, issue.fields.summary);
+        let url    = issue.browse_url(site_base);
+        let done   = issue.is_done();
+        let prefix = format!("{} ", issue.key);
+        let embedding = embedder.and_then(|e| e.embed(&issue.fields.summary).ok());
+        let todo_id = match db.find_todo_by_prefix(topic.id, &prefix)? {
+            Some((id, _)) => {
+                db.update_todo_text_and_done(id, &text, done, Some(url.as_str()), embedding.as_deref())?;
+                id
+            }
+            None => {
+                let todo = db.insert_todo(topic.id, &text, Some(url.as_str()), embedding.as_deref())?;
+                todo.id
+            }
+        };
+        if let Some(due) = due_dates.get(&issue.key) {
+            db.set_todo_due_date(todo_id, Some(due.as_str()))?;
+        }
+    }
+    Ok(())
+}
+
 fn fetch_issues(jql: &str) -> Result<Vec<JiraIssue>> {
     let output = Command::new("acli")
         .args(["jira", "workitem", "search", "--jql", jql, "--json", "--limit", "50"])

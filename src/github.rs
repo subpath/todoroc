@@ -135,6 +135,55 @@ fn sync_topic(db: &Database, embedder: Option<&Embedder>, topic_name: &str, prs:
     Ok(())
 }
 
+pub fn sync_headless(db: &Database, embedder: Option<&Embedder>, report: &dyn Fn(&str)) -> Result<()> {
+    db.delete_topic_by_name("My PRs")?;
+    db.delete_topic_by_name("Review Requests")?;
+    db.delete_topic_by_name("⎇  My PRs")?;
+
+    report("GitHub: fetching PRs…");
+    let my_prs = fetch_prs(&["search", "prs", "--author", "@me", "--state", "open",
+        "--json", "number,title,state,repository", "--limit", "50"])?;
+    let review_prs = fetch_prs(&["search", "prs", "--review-requested", "@me", "--state", "open",
+        "--json", "number,title,state,repository", "--limit", "50"])?;
+
+    report(&format!("GitHub: {} PRs, {} reviews", my_prs.len(), review_prs.len()));
+    sync_topic_headless(db, embedder, "🔀 My PRs", &my_prs)?;
+    sync_topic_headless(db, embedder, "👀 Reviews", &review_prs)?;
+    Ok(())
+}
+
+fn sync_topic_headless(db: &Database, embedder: Option<&Embedder>, topic_name: &str, prs: &[PrItem]) -> Result<()> {
+    let topic = db.find_or_create_topic(topic_name)?;
+    let open_numbers: std::collections::HashSet<u64> = prs.iter().map(|p| p.number).collect();
+
+    for pr in prs {
+        let prefix = format!("#{} ", pr.number);
+        let text   = format!("#{} {} [{}]", pr.number, pr.title, pr.repository.name_with_owner);
+        let done   = pr.state.to_lowercase() != "open";
+        let url    = format!("https://github.com/{}/pull/{}", pr.repository.name_with_owner, pr.number);
+        let embedding = embedder.and_then(|e| e.embed(&pr.title).ok());
+        match db.find_todo_by_prefix(topic.id, &prefix)? {
+            Some((id, _)) => { db.update_todo_text_and_done(id, &text, done, Some(url.as_str()), embedding.as_deref())?; }
+            None          => { db.insert_todo(topic.id, &text, Some(url.as_str()), embedding.as_deref())?; }
+        }
+    }
+
+    for todo in db.todos_for_topic(topic.id)? {
+        if todo.done { continue; }
+        let pr_number = todo.text.strip_prefix('#')
+            .and_then(|s| s.split_whitespace().next())
+            .and_then(|n| n.parse::<u64>().ok());
+        let Some(number) = pr_number else { continue };
+        if open_numbers.contains(&number) { continue; }
+        let url = todo.url.as_deref().unwrap_or("");
+        if url.is_empty() { continue; }
+        if !is_pr_open(url) {
+            db.update_todo_text_and_done(todo.id, &todo.text, true, Some(url), None)?;
+        }
+    }
+    Ok(())
+}
+
 /// Returns false if the PR is confirmed merged or closed; true if open or state unknown.
 fn is_pr_open(url: &str) -> bool {
     #[derive(Deserialize)]

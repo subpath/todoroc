@@ -43,9 +43,14 @@ lint:
 clean:
 	cargo clean
 
-## Download / activate the default embedding model
+## Download model and pre-compile graph cache (debug build to avoid OOM on large models)
 setup:
-	cargo run --release -- --model sentence-transformers/all-MiniLM-L6-v2
+	cargo run -- --model sentence-transformers/all-MiniLM-L6-v2
+	cargo run -- --compile-model
+
+## Pre-compile ONNX → NNEF cache so the release binary loads without OOM
+compile-model:
+	cargo run -- --compile-model
 
 ## Re-embed all items with the current model
 reindex:

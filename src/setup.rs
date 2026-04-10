@@ -128,6 +128,21 @@ pub fn reindex(db_path: &str, model_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
+pub fn reindex_headless(db: &Database, embedder: Option<&Embedder>, report: &dyn Fn(&str)) -> Result<()> {
+    let Some(embedder) = embedder else {
+        report("Reindex: no model loaded, skipping");
+        return Ok(());
+    };
+    let todos = db.all_todos()?;
+    report(&format!("Reindexing {} items…", todos.len()));
+    for todo in &todos {
+        if let Ok(emb) = embedder.embed(&todo.text) {
+            db.update_embedding(todo.id, &emb)?;
+        }
+    }
+    Ok(())
+}
+
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::collections::HashMap;
+use std::time::Instant;
 
 use crate::db::{cosine_similarity, Database};
 use crate::due_date;
@@ -10,7 +11,6 @@ use crate::models::{Todo, Topic};
 pub enum Focus {
     Topics,
     Todos,
-    Search,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -118,6 +118,14 @@ pub struct DetailState {
     pub detail_scroll: u16,
 }
 
+pub struct SyncStatus {
+    pub message: String,
+    pub done: bool,
+    pub error: bool,
+    pub spinner_frame: usize,
+    pub done_frames: u32, // countdown to auto-clear (~100ms per frame)
+}
+
 pub struct AppInfo {
     pub db_path: String,
     pub model_dir: String,
@@ -151,6 +159,14 @@ pub struct App {
     pub due_input: String,
     pub due_cursor: usize,
     pub detail: Option<DetailState>,
+    pub move_popup: bool,
+    pub move_popup_selected: usize,
+    pub sync_popup: bool,
+    pub sync_popup_selected: usize,
+    pub sync_rx: Option<std::sync::mpsc::Receiver<crate::sync::SyncMsg>>,
+    pub sync_status: Option<SyncStatus>,
+    pub search_debounce: Option<Instant>,
+    pub search_open: bool,
 }
 
 impl App {
@@ -158,6 +174,7 @@ impl App {
         let mut topics = vec![
             Topic { id: -1, name: "🔄 In Progress".to_string() },
             Topic { id: -2, name: "✅ Completed".to_string() },
+            Topic { id: -3, name: "📅 Due This Week".to_string() },
         ];
         topics.extend(db.list_topics()?);
         let topic_counts = db.topic_counts()?;
@@ -191,6 +208,14 @@ impl App {
             due_input: String::new(),
             due_cursor: 0,
             detail: None,
+            move_popup: false,
+            move_popup_selected: 0,
+            sync_popup: false,
+            sync_popup_selected: 0,
+            sync_rx: None,
+            sync_status: None,
+            search_debounce: None,
+            search_open: false,
         })
     }
 
@@ -199,7 +224,7 @@ impl App {
     }
 
     pub fn is_virtual_topic(&self) -> bool {
-        matches!(self.selected_topic_id(), Some(-1) | Some(-2))
+        matches!(self.selected_topic_id(), Some(-1) | Some(-2) | Some(-3))
     }
 
     fn embed_with_status(&mut self, text: &str) -> Option<Vec<f32>> {
@@ -217,6 +242,7 @@ impl App {
         let mut topics = vec![
             Topic { id: -1, name: "🔄 In Progress".to_string() },
             Topic { id: -2, name: "✅ Completed".to_string() },
+            Topic { id: -3, name: "📅 Due This Week".to_string() },
         ];
         topics.extend(self.db.list_topics()?);
         self.topics = topics;
@@ -231,6 +257,7 @@ impl App {
         self.todos = match self.selected_topic_id() {
             Some(-1) => self.db.todos_in_progress()?,
             Some(-2) => self.db.todos_completed()?,
+            Some(-3) => self.db.todos_due_this_week()?,
             Some(id) => self.db.todos_for_topic(id)?,
             None     => vec![],
         };
@@ -242,6 +269,8 @@ impl App {
         let (in_progress, completed) = self.db.virtual_topic_counts()?;
         self.topic_counts.insert(-1, (in_progress, 0));
         self.topic_counts.insert(-2, (completed, completed));
+        let due_this_week = self.db.due_this_week_count()?;
+        self.topic_counts.insert(-3, (due_this_week, 0));
         Ok(())
     }
 
@@ -254,6 +283,7 @@ impl App {
         self.todos = match self.selected_topic_id() {
             Some(-1) => self.db.todos_in_progress()?,
             Some(-2) => self.db.todos_completed()?,
+            Some(-3) => self.db.todos_due_this_week()?,
             Some(id) => self.db.todos_for_topic(id)?,
             None => vec![],
         };
@@ -522,7 +552,6 @@ impl App {
                 let _ = self.reload_todos();
             }
             Focus::Todos => { self.selected_todo = 0; }
-            Focus::Search => { self.selected_search_result = 0; }
         }
     }
 
@@ -533,7 +562,6 @@ impl App {
                 let _ = self.reload_todos();
             }
             Focus::Todos => { self.selected_todo = self.todos.len().saturating_sub(1); }
-            Focus::Search => { self.selected_search_result = self.search_results.len().saturating_sub(1); }
         }
     }
 
@@ -550,11 +578,6 @@ impl App {
                     self.selected_todo -= 1;
                 }
             }
-            Focus::Search => {
-                if self.selected_search_result > 0 {
-                    self.selected_search_result -= 1;
-                }
-            }
         }
     }
 
@@ -569,11 +592,6 @@ impl App {
             Focus::Todos => {
                 if self.selected_todo + 1 < self.todos.len() {
                     self.selected_todo += 1;
-                }
-            }
-            Focus::Search => {
-                if self.selected_search_result + 1 < self.search_results.len() {
-                    self.selected_search_result += 1;
                 }
             }
         }
@@ -664,6 +682,43 @@ impl App {
         }
     }
 
+    /// Returns real topics eligible as move targets for the selected todo (excludes the todo's current topic).
+    pub fn move_popup_topics(&self) -> Vec<Topic> {
+        let current_topic_id = self.todos.get(self.selected_todo).map(|t| t.topic_id);
+        self.topics.iter()
+            .filter(|t| t.id > 0 && Some(t.id) != current_topic_id)
+            .cloned()
+            .collect()
+    }
+
+    pub fn open_move_popup(&mut self) {
+        if self.todos.is_empty() { return; }
+        if self.move_popup_topics().is_empty() {
+            self.status_message = Some("No other topics to move to".into());
+            return;
+        }
+        self.move_popup_selected = 0;
+        self.move_popup = true;
+    }
+
+    pub fn close_move_popup(&mut self) {
+        self.move_popup = false;
+    }
+
+    pub fn confirm_move_todo(&mut self) -> Result<()> {
+        let target_id = {
+            let targets = self.move_popup_topics();
+            targets.get(self.move_popup_selected).map(|t| t.id)
+        };
+        let Some(target_id) = target_id else { return Ok(()); };
+        let Some(todo) = self.todos.get(self.selected_todo) else { return Ok(()); };
+        let todo_id = todo.id;
+        self.db.move_todo_to_topic(todo_id, target_id)?;
+        self.move_popup = false;
+        self.reload_todos()?;
+        Ok(())
+    }
+
     /// Open the URL of the currently focused item in the default browser.
     pub fn open_url(&mut self) {
         let url = if let Some(d) = &self.detail {
@@ -672,11 +727,12 @@ impl App {
             } else {
                 if d.url.is_empty() { None } else { Some(d.url.clone()) }
             }
+        } else if self.search_open {
+            self.search_results.get(self.selected_search_result)
+                .and_then(|(t, _)| t.url.clone())
         } else {
             match self.focus {
                 Focus::Todos => self.todos.get(self.selected_todo).and_then(|t| t.url.clone()),
-                Focus::Search => self.search_results.get(self.selected_search_result)
-                    .and_then(|(t, _)| t.url.clone()),
                 Focus::Topics => None,
             }
         };
@@ -689,6 +745,89 @@ impl App {
             }
             None => self.status_message = Some("No URL attached to this item".into()),
         }
+    }
+
+    pub fn open_sync_popup(&mut self) {
+        if self.sync_rx.is_some() {
+            self.status_message = Some("Sync already in progress".into());
+            return;
+        }
+        self.sync_popup = true;
+        self.sync_popup_selected = 0;
+    }
+
+    pub fn close_sync_popup(&mut self) {
+        self.sync_popup = false;
+    }
+
+    pub fn start_sync(&mut self, kind: crate::sync::SyncKind) {
+        let rx = crate::sync::start(
+            kind,
+            self.info.db_path.clone(),
+            std::path::PathBuf::from(&self.info.model_dir),
+        );
+        self.sync_rx = Some(rx);
+        self.sync_status = Some(SyncStatus {
+            message: format!("Starting {}…", kind.label()),
+            done: false,
+            error: false,
+            spinner_frame: 0,
+            done_frames: 0,
+        });
+        self.sync_popup = false;
+    }
+
+    pub fn poll_sync(&mut self) -> Result<()> {
+        use crate::sync::SyncMsg;
+
+        let msgs: Vec<SyncMsg> = {
+            if let Some(rx) = &self.sync_rx {
+                let mut v = Vec::new();
+                while let Ok(msg) = rx.try_recv() { v.push(msg); }
+                v
+            } else {
+                Vec::new()
+            }
+        };
+
+        for msg in msgs {
+            match msg {
+                SyncMsg::Status(s) => {
+                    if let Some(ss) = &mut self.sync_status { ss.message = s; }
+                }
+                SyncMsg::Done => {
+                    self.sync_rx = None;
+                    if let Some(ss) = &mut self.sync_status {
+                        ss.done = true;
+                        ss.message = "Sync complete ✓".into();
+                        ss.done_frames = 30; // ~3 s
+                    }
+                    self.reload_topics()?;
+                }
+                SyncMsg::Error(e) => {
+                    self.sync_rx = None;
+                    if let Some(ss) = &mut self.sync_status {
+                        ss.done = true;
+                        ss.error = true;
+                        ss.message = format!("Sync error: {}", e);
+                        ss.done_frames = 50; // ~5 s for errors
+                    }
+                }
+            }
+        }
+
+        // Tick spinner / countdown
+        if let Some(ss) = &mut self.sync_status {
+            if !ss.done {
+                ss.spinner_frame = (ss.spinner_frame + 1) % 10;
+            } else if ss.done_frames > 0 {
+                ss.done_frames -= 1;
+                if ss.done_frames == 0 {
+                    self.sync_status = None;
+                }
+            }
+        }
+        Ok(())
     }
 }
 

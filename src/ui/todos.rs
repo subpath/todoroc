@@ -80,8 +80,8 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
 
             let priority_span = match t.priority {
                 Some(1) => Some(Span::styled("[!!] ", Style::default().fg(Color::Red))),
-                Some(2) => Some(Span::styled("[!]  ", Style::default().fg(Color::Yellow))),
-                Some(3) => Some(Span::styled("[.]  ", Style::default().fg(Color::Blue))),
+                Some(2) => Some(Span::styled("[!] ", Style::default().fg(Color::Yellow))),
+                Some(3) => Some(Span::styled("[.] ", Style::default().fg(Color::Blue))),
                 _       => None,
             };
             let priority_len = priority_span.as_ref().map(|s| s.content.chars().count()).unwrap_or(0);
@@ -138,7 +138,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     };
     let hint_owned;
     let hint = if focused && app.mode == Mode::Normal {
-        hint_owned = format!(" n:new  ↵:detail  e:edit  d:del  @:due  p:priority  spc:toggle  o:open↗  {}  ↑↓/jk:nav ", sort_label);
+        hint_owned = format!(" n:new  ↵:detail  e:edit  d:del  @:due  p:priority  m:move  spc:toggle  o:open↗  {}  /:search  ↑↓/jk:nav ", sort_label);
         hint_owned.as_str()
     } else {
         ""
