@@ -11,6 +11,11 @@ A terminal-based todo manager with semantic search, GitHub, and Jira integration
 ## Features
 
 - **Multi-pane TUI** — topics list, todos list, and search panel
+- **Virtual topics** — built-in "🔄 In Progress" and "✅ Completed" aggregate views across all topics
+- **Detail panel** — press `Enter` to open a full editor: text, priority, due date, URL, timestamps, and comments
+- **Comments** — attach threaded comments to any todo from the detail panel
+- **Priority levels** — inline `!1`/`!2`/`!3` syntax or `p` key to cycle; color-coded and sorted above other todos
+- **Overdue digest** — summary of overdue items printed on launch before opening the TUI
 - **Semantic search** — AI-powered search across all todos using local ONNX embeddings (no cloud)
 - **Due dates** — set due dates with natural language input, shown inline with color-coded urgency
 - **GitHub sync** — pulls your open PRs and pending review requests via `gh` CLI
@@ -60,12 +65,14 @@ Options:
 | Key | Action |
 |-----|--------|
 | `n` | New todo |
-| `e` | Edit selected todo |
+| `Enter` | Open detail panel (edit text, priority, due date, URL, comments) |
+| `e` | Edit selected todo inline |
+| `p` | Cycle priority: none → `!1` → `!2` → `!3` → none |
 | `d` | Delete selected todo |
 | `@` | Set due date |
-| `Space` | Toggle completion |
+| `Space` | Toggle completion (tracks started/completed timestamps) |
 | `o` | Open attached URL in browser |
-| `s` | Toggle sort: bucketed (unfinished → finished) / flat (by creation time) |
+| `s` | Toggle sort: bucketed (priority → due date → creation) / flat |
 
 ### Global
 
@@ -74,12 +81,24 @@ Options:
 | `Tab` / `Shift+Tab` | Cycle focus between panels |
 | `1` / `2` / `3` | Focus Topics / Todos / Search |
 | `↑↓` / `jk` | Navigate |
+| `Shift+↑` / `Shift+↓` | Jump to top / bottom |
 | `n` | New topic / search query |
 | `e` | Edit selected topic |
 | `d` | Delete selected topic |
 | `Enter` | Save or execute search |
 | `i` | Info popup (model, DB stats) |
 | `q` | Quit |
+
+### Detail panel
+
+| Key | Action |
+|-----|--------|
+| `Tab` / `Shift+Tab` | Move between fields |
+| `Enter` | Save (on text/due/URL fields); submit new comment |
+| `Esc` | Close without saving |
+| `↑↓` | Scroll detail view |
+| `Shift+↑` / `Shift+↓` | Scroll by 5 lines |
+| `c` | Jump to new comment field |
 
 ## Due Dates
 
@@ -105,9 +124,39 @@ Due dates are shown inline before the todo text, color-coded:
 
 Jira due dates are pulled automatically on sync.
 
+## Virtual Topics
+
+The first two entries in the topics list are always:
+
+- **🔄 In Progress** — all todos that have been started but not yet completed, across every topic
+- **✅ Completed** — all completed todos, across every topic
+
+These are read-only views; new todos cannot be added to them directly.
+
 ## Topics
 
 Each topic shows a `[done/total]` count. The count turns green when all items are complete.
+
+## Priority
+
+Todos can have a priority of `!1` (high), `!2` (medium), or `!3` (low).
+
+- **Inline syntax** — type `!1`, `!2`, or `!3` anywhere in the todo text when adding or editing; the tag is stripped and stored separately
+- **`p` key** — cycles the priority of the selected todo without opening the editor
+- **Sorted first** — in bucketed sort, priority todos appear before due-date-only and unprioritized todos, sorted by priority then due date
+
+## Overdue Digest
+
+On launch, if any todos are overdue, a summary is printed to the terminal before opening the TUI:
+
+```
+  ⚠  3 overdue items
+
+  [Work] fix the staging deploy !1  2d ago
+  ...
+
+  Press Enter to open the app...
+```
 
 ## Search
 
