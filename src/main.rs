@@ -12,18 +12,49 @@ mod ui;
 use std::{fs, io, path::PathBuf, time::Duration};
 
 use anyhow::Result;
+use clap::{Parser, Subcommand};
 use crossterm::{
-    event::{self, Event, KeyCode, KeyModifiers},
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
+use tui_textarea::TextArea;
 
 use app::{App, AppInfo, DetailField, Focus, Mode};
 use db::Database;
 use embeddings::Embedder;
 use std::time::Instant;
 use sync::SyncKind;
+
+#[derive(Parser)]
+#[command(name = "todo", about = "Terminal todo manager with semantic search")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Download and activate a Hugging Face embedding model
+    Model {
+        /// HuggingFace model repository
+        #[arg(default_value = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")]
+        repo: String,
+    },
+    /// Download the default embedding model (alias for `model`)
+    Setup,
+    /// Re-embed all todos with the current model
+    Reindex,
+    /// Delete all topics and todos
+    ClearDb,
+    /// Full sync: GitHub + Jira + reindex
+    Sync,
+    /// Pull assigned Jira issues into a todo topic
+    SyncJira,
+    /// Pull open GitHub PRs into todo topics
+    SyncGh,
+}
 
 fn data_dir() -> PathBuf {
     let dir = dirs_home().join(".todo-tui");
@@ -38,100 +69,85 @@ fn dirs_home() -> PathBuf {
 }
 
 fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().collect();
+    let cli = Cli::parse();
     let dir = data_dir();
 
-    // --model <hf-repo>  →  download and activate model
-    if let Some(pos) = args.iter().position(|a| a == "--model") {
-        let model = args
-            .get(pos + 1)
-            .map(|s| s.as_str())
-            .unwrap_or("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2");
-        setup::download_model(&dir.join("model"), model)?;
-        return Ok(());
-    }
-
-    // --setup  →  download default model (kept for backwards compat)
-    if args.iter().any(|a| a == "--setup") {
-        setup::download_model(
-            &dir.join("model"),
-            "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-        )?;
-        return Ok(());
-    }
-
-    // --reindex  →  re-embed all todos with current model
-    if args.iter().any(|a| a == "--reindex") {
-        let db_path = dir.join("todos.db");
-        setup::reindex(db_path.to_str().unwrap(), &dir.join("model"))?;
-        return Ok(());
-    }
-
-    // --clear-db  →  delete all topics and todos
-    if args.iter().any(|a| a == "--clear-db") {
-        let db_path = dir.join("todos.db");
-        print!("This will delete ALL topics and todos. Are you sure? [y/N] ");
-        std::io::Write::flush(&mut std::io::stdout())?;
-        let mut input = String::new();
-        std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut input)?;
-        if input.trim().to_lowercase() == "y" {
-            let db = Database::open(db_path.to_str().unwrap())?;
-            db.clear()?;
-            println!("Database cleared.");
-        } else {
-            println!("Aborted.");
+    match cli.command {
+        Some(Commands::Model { repo }) => {
+            setup::download_model(&dir.join("model"), &repo)?;
+            return Ok(());
         }
-        return Ok(());
-    }
-
-    // --sync  →  full sync: gh + jira + reindex
-    if args.iter().any(|a| a == "--sync") {
-        let db_path = dir.join("todos.db");
-        let model_dir = dir.join("model");
-        let db = Database::open(db_path.to_str().unwrap())?;
-        let embedder = if model_dir.exists() {
-            Embedder::load(&model_dir).ok()
-        } else {
-            None
-        };
-
-        println!("━━━ GitHub ━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        github::sync(&db, embedder.as_ref())?;
-        println!();
-        println!("━━━ Jira ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        jira::sync(&db, embedder.as_ref())?;
-        println!();
-        println!("━━━ Reindex ━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        setup::reindex(db_path.to_str().unwrap(), &model_dir)?;
-        return Ok(());
-    }
-
-    // --sync-jira  →  pull assigned Jira issues into a todo topic
-    if args.iter().any(|a| a == "--sync-jira") {
-        let db_path = dir.join("todos.db");
-        let db = Database::open(db_path.to_str().unwrap())?;
-        let model_dir = dir.join("model");
-        let embedder = if model_dir.exists() {
-            Embedder::load(&model_dir).ok()
-        } else {
-            None
-        };
-        jira::sync(&db, embedder.as_ref())?;
-        return Ok(());
-    }
-
-    // --sync-gh  →  pull open PRs from GitHub into todo topics
-    if args.iter().any(|a| a == "--sync-gh") {
-        let db_path = dir.join("todos.db");
-        let db = Database::open(db_path.to_str().unwrap())?;
-        let model_dir = dir.join("model");
-        let embedder = if model_dir.exists() {
-            Embedder::load(&model_dir).ok()
-        } else {
-            None
-        };
-        github::sync(&db, embedder.as_ref())?;
-        return Ok(());
+        Some(Commands::Setup) => {
+            setup::download_model(
+                &dir.join("model"),
+                "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+            )?;
+            return Ok(());
+        }
+        Some(Commands::Reindex) => {
+            let db_path = dir.join("todos.db");
+            setup::reindex(db_path.to_str().unwrap(), &dir.join("model"))?;
+            return Ok(());
+        }
+        Some(Commands::ClearDb) => {
+            let db_path = dir.join("todos.db");
+            print!("This will delete ALL topics and todos. Are you sure? [y/N] ");
+            std::io::Write::flush(&mut std::io::stdout())?;
+            let mut input = String::new();
+            std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut input)?;
+            if input.trim().to_lowercase() == "y" {
+                let db = Database::open(db_path.to_str().unwrap())?;
+                db.clear()?;
+                println!("Database cleared.");
+            } else {
+                println!("Aborted.");
+            }
+            return Ok(());
+        }
+        Some(Commands::Sync) => {
+            let db_path = dir.join("todos.db");
+            let model_dir = dir.join("model");
+            let db = Database::open(db_path.to_str().unwrap())?;
+            let embedder = if model_dir.exists() {
+                Embedder::load(&model_dir).ok()
+            } else {
+                None
+            };
+            println!("━━━ GitHub ━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            github::sync(&db, embedder.as_ref())?;
+            println!();
+            println!("━━━ Jira ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            jira::sync(&db, embedder.as_ref())?;
+            println!();
+            println!("━━━ Reindex ━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            setup::reindex(db_path.to_str().unwrap(), &model_dir)?;
+            return Ok(());
+        }
+        Some(Commands::SyncJira) => {
+            let db_path = dir.join("todos.db");
+            let db = Database::open(db_path.to_str().unwrap())?;
+            let model_dir = dir.join("model");
+            let embedder = if model_dir.exists() {
+                Embedder::load(&model_dir).ok()
+            } else {
+                None
+            };
+            jira::sync(&db, embedder.as_ref())?;
+            return Ok(());
+        }
+        Some(Commands::SyncGh) => {
+            let db_path = dir.join("todos.db");
+            let db = Database::open(db_path.to_str().unwrap())?;
+            let model_dir = dir.join("model");
+            let embedder = if model_dir.exists() {
+                Embedder::load(&model_dir).ok()
+            } else {
+                None
+            };
+            github::sync(&db, embedder.as_ref())?;
+            return Ok(());
+        }
+        None => {}
     }
 
     let dir = data_dir();
@@ -256,6 +272,9 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         }
 
         if let Event::Key(key) = event::read()? {
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
             app.status_message = None;
 
             if app.confirm_quit {
@@ -267,7 +286,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             } else if app.sync_popup {
                 handle_sync_popup(app, key.code)?;
             } else if app.due_popup {
-                handle_due_popup(app, key.code)?;
+                handle_due_popup(app, key)?;
             } else if app.move_popup {
                 handle_move_popup(app, key.code)?;
             } else if app.detail.is_some() {
@@ -279,7 +298,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             } else {
                 match app.mode {
                     Mode::Normal => handle_normal(app, key.code, key.modifiers)?,
-                    Mode::Insert => handle_insert(app, key.code)?,
+                    Mode::Insert => handle_insert(app, key)?,
                 }
             }
         }
@@ -430,8 +449,7 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
                 app.status_message = Some("Cannot add todos to virtual topics".into());
             } else {
                 app.mode = Mode::Insert;
-                app.input.clear();
-                app.cursor_pos = 0;
+                app.input_ta = TextArea::default();
                 app.editing = false;
             }
         }
@@ -439,16 +457,20 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
         KeyCode::Char('e') => match app.focus {
             Focus::Topics => {
                 if let Some(topic) = app.topics.get(app.selected_topic) {
-                    app.input = topic.name.clone();
-                    app.cursor_pos = app.input.chars().count();
+                    let name = topic.name.clone();
+                    let mut ta = TextArea::default();
+                    ta.insert_str(&name);
+                    app.input_ta = ta;
                     app.editing = true;
                     app.mode = Mode::Insert;
                 }
             }
             Focus::Todos => {
                 if let Some(todo) = app.todos.get(app.selected_todo) {
-                    app.input = todo.text.clone();
-                    app.cursor_pos = app.input.chars().count();
+                    let text = todo.text.clone();
+                    let mut ta = TextArea::default();
+                    ta.insert_str(&text);
+                    app.input_ta = ta;
                     app.editing = true;
                     app.mode = Mode::Insert;
                 }
@@ -568,7 +590,7 @@ fn field_scroll_target(field: &DetailField) -> u16 {
         DetailField::Due => 5,
         DetailField::Url => 8,
         DetailField::NewComment => 11,
-        DetailField::ExistingComment(i) => 14 + (*i as u16) * 4,
+        DetailField::ExistingComment(i) => 14 + (*i as u16) * 3,
     }
 }
 
@@ -635,27 +657,39 @@ fn handle_detail(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
             }
             return Ok(());
         }
-        KeyCode::Up if modifiers.contains(KeyModifiers::SHIFT) => {
-            if let Some(d) = app.detail.as_mut() {
-                d.detail_scroll = d.detail_scroll.saturating_sub(5);
-            }
-            return Ok(());
-        }
-        KeyCode::Down if modifiers.contains(KeyModifiers::SHIFT) => {
-            if let Some(d) = app.detail.as_mut() {
-                d.detail_scroll = d.detail_scroll.saturating_add(5);
-            }
-            return Ok(());
-        }
         KeyCode::Up => {
-            if let Some(d) = app.detail.as_mut() {
-                d.detail_scroll = d.detail_scroll.saturating_sub(1);
+            let Some(d) = app.detail.as_ref() else {
+                return Ok(());
+            };
+            let prev_field = d.field.prev(d.comments.len());
+            if matches!(d.field, DetailField::ExistingComment(_)) {
+                app.save_comment_edit()?;
+            }
+            let Some(d) = app.detail.as_mut() else {
+                return Ok(());
+            };
+            d.field = prev_field.clone();
+            d.detail_scroll = field_scroll_target(&prev_field);
+            if let DetailField::ExistingComment(i) = &prev_field {
+                app.enter_comment_edit(*i);
             }
             return Ok(());
         }
         KeyCode::Down => {
-            if let Some(d) = app.detail.as_mut() {
-                d.detail_scroll = d.detail_scroll.saturating_add(1);
+            let Some(d) = app.detail.as_ref() else {
+                return Ok(());
+            };
+            let next_field = d.field.next(d.comments.len());
+            if matches!(d.field, DetailField::ExistingComment(_)) {
+                app.save_comment_edit()?;
+            }
+            let Some(d) = app.detail.as_mut() else {
+                return Ok(());
+            };
+            d.field = next_field.clone();
+            d.detail_scroll = field_scroll_target(&next_field);
+            if let DetailField::ExistingComment(i) = &next_field {
+                app.enter_comment_edit(*i);
             }
             return Ok(());
         }
@@ -762,30 +796,13 @@ fn edit_field(text: &mut String, cursor: &mut usize, key: KeyCode) {
     }
 }
 
-fn handle_due_popup(app: &mut App, key: KeyCode) -> Result<()> {
-    match key {
+fn handle_due_popup(app: &mut App, key: KeyEvent) -> Result<()> {
+    match key.code {
         KeyCode::Esc => app.close_due_popup(),
         KeyCode::Enter => app.confirm_due_date()?,
-        KeyCode::Backspace => {
-            if delete_char_before(&mut app.due_input, app.due_cursor) {
-                app.due_cursor -= 1;
-            }
+        _ => {
+            app.due_ta.input(key);
         }
-        KeyCode::Left => {
-            if app.due_cursor > 0 {
-                app.due_cursor -= 1;
-            }
-        }
-        KeyCode::Right => {
-            if app.due_cursor < app.due_input.chars().count() {
-                app.due_cursor += 1;
-            }
-        }
-        KeyCode::Char(c) => {
-            insert_char_at(&mut app.due_input, app.due_cursor, c);
-            app.due_cursor += 1;
-        }
-        _ => {}
     }
     Ok(())
 }
@@ -836,17 +853,15 @@ fn handle_move_popup(app: &mut App, key: KeyCode) -> Result<()> {
     Ok(())
 }
 
-fn handle_insert(app: &mut App, key: KeyCode) -> Result<()> {
-    match key {
+fn handle_insert(app: &mut App, key: KeyEvent) -> Result<()> {
+    match key.code {
         KeyCode::Esc => {
             app.mode = Mode::Normal;
-            app.input.clear();
-            app.cursor_pos = 0;
+            app.input_ta = TextArea::default();
             app.editing = false;
         }
-
         KeyCode::Enter => {
-            let text = app.input.clone();
+            let text = app.input_ta.lines().first().cloned().unwrap_or_default();
             if !text.is_empty() {
                 match app.focus {
                     Focus::Topics => {
@@ -866,35 +881,14 @@ fn handle_insert(app: &mut App, key: KeyCode) -> Result<()> {
                 }
             }
             app.mode = Mode::Normal;
-            app.input.clear();
-            app.cursor_pos = 0;
+            app.input_ta = TextArea::default();
             app.editing = false;
         }
-
-        KeyCode::Backspace => {
-            if delete_char_before(&mut app.input, app.cursor_pos) {
-                app.cursor_pos -= 1;
-            }
+        // Prevent textarea from inserting a newline on Tab
+        KeyCode::Tab => {}
+        _ => {
+            app.input_ta.input(key);
         }
-
-        KeyCode::Left => {
-            if app.cursor_pos > 0 {
-                app.cursor_pos -= 1;
-            }
-        }
-
-        KeyCode::Right => {
-            if app.cursor_pos < app.input.chars().count() {
-                app.cursor_pos += 1;
-            }
-        }
-
-        KeyCode::Char(c) => {
-            insert_char_at(&mut app.input, app.cursor_pos, c);
-            app.cursor_pos += 1;
-        }
-
-        _ => {}
     }
     Ok(())
 }

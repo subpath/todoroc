@@ -92,12 +92,14 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     if focused && app.mode == Mode::Insert {
-        let chars: Vec<char> = app.input.chars().collect();
-        let before: String = chars[..app.cursor_pos.min(chars.len())].iter().collect();
-        let (cursor_str, after): (String, String) = if app.cursor_pos < chars.len() {
+        let input_text = app.input_ta.lines().first().map(|s| s.as_str()).unwrap_or("");
+        let cursor_col = app.input_ta.cursor().1;
+        let chars: Vec<char> = input_text.chars().collect();
+        let before: String = chars[..cursor_col.min(chars.len())].iter().collect();
+        let (cursor_str, after): (String, String) = if cursor_col < chars.len() {
             (
-                chars[app.cursor_pos].to_string(),
-                chars[app.cursor_pos + 1..].iter().collect(),
+                chars[cursor_col].to_string(),
+                chars[cursor_col + 1..].iter().collect(),
             )
         } else {
             ("_".to_string(), String::new())

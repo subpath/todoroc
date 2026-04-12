@@ -1,0 +1,7 @@
+[workspace]
+publish = false
+push = true
+sign-commit = false
+sign-tag = false
+tag-name = "v{{version}}"
+pre-release-commit-message = "release {{version}}"

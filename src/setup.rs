@@ -1,11 +1,18 @@
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
+use rayon::prelude::*;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::db::Database;
 use crate::embeddings::Embedder;
+
+thread_local! {
+    static LOCAL_EMBEDDER: RefCell<Option<Embedder>> = RefCell::new(None);
+}
 
 fn hf_url(model: &str, file: &str) -> String {
     format!("https://huggingface.co/{}/resolve/main/{}", model, file)
@@ -95,8 +102,10 @@ fn download_file(url: &str, dest: &Path, label: &str) -> Result<()> {
 
 pub fn reindex(db_path: &str, model_dir: &Path) -> Result<()> {
     let db = Database::open(db_path)?;
-    let embedder = Embedder::load(model_dir)
-        .context("Failed to load embedder — run `todo-tui --model <name>` first")?;
+
+    // Verify the model loads before spinning up worker threads.
+    Embedder::load(model_dir)
+        .context("Failed to load embedder — run `todo model <name>` first")?;
 
     let todos = db.all_todos()?;
     if todos.is_empty() {
@@ -107,34 +116,58 @@ pub fn reindex(db_path: &str, model_dir: &Path) -> Result<()> {
     println!("Reindexing {} todos...", todos.len());
     println!();
 
+    // Pre-load all comment texts sequentially to avoid concurrent DB access.
+    let all_comments: HashMap<i64, Vec<String>> = todos
+        .iter()
+        .map(|t| (t.id, db.all_comment_texts_by_todo(t.id).unwrap_or_default()))
+        .collect();
+
     let pb = ProgressBar::new(todos.len() as u64);
     pb.set_style(
-        ProgressStyle::with_template(" [{bar:40.green/dark_gray}] {pos}/{len}  {msg}")
+        ProgressStyle::with_template(" [{bar:40.green/dark_gray}] {pos}/{len}  embedding…")
             .unwrap()
             .progress_chars("█▉▊▋▌▍▎▏ "),
     );
 
-    let mut errors = 0usize;
-    for todo in &todos {
-        pb.set_message(truncate(&todo.text, 35));
-        let comments = db.all_comment_texts_by_todo(todo.id).unwrap_or_default();
-        let embed_text = if comments.is_empty() {
-            todo.text.clone()
-        } else {
-            format!("{}\n{}", todo.text, comments.join("\n"))
-        };
-        match embedder.embed(&embed_text) {
-            Ok(emb) => {
-                db.update_embedding(todo.id, &emb)?;
-            }
-            Err(_) => {
-                errors += 1;
-            }
-        }
-        pb.inc(1);
-    }
+    let model_dir_buf = model_dir.to_path_buf();
+
+    // Parallel embedding: each rayon thread owns one model instance (loaded lazily).
+    let results: Vec<(i64, Option<Vec<f32>>)> = todos
+        .par_iter()
+        .map(|todo| {
+            let comments = all_comments
+                .get(&todo.id)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
+            let embed_text = if comments.is_empty() {
+                todo.text.clone()
+            } else {
+                format!("{}\n{}", todo.text, comments.join("\n"))
+            };
+
+            let embedding = LOCAL_EMBEDDER.with(|cell| {
+                let mut opt = cell.borrow_mut();
+                if opt.is_none() {
+                    *opt = Embedder::load(&model_dir_buf).ok();
+                }
+                opt.as_ref().and_then(|emb| emb.embed(&embed_text).ok())
+            });
+
+            pb.inc(1);
+            (todo.id, embedding)
+        })
+        .collect();
 
     pb.finish_and_clear();
+
+    // Sequential DB writes.
+    let mut errors = 0usize;
+    for (id, embedding) in &results {
+        match embedding {
+            Some(emb) => db.update_embedding(*id, emb)?,
+            None => errors += 1,
+        }
+    }
 
     if errors > 0 {
         println!(
@@ -173,10 +206,3 @@ pub fn reindex_headless(
     Ok(())
 }
 
-fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}…", &s[..max])
-    }
-}

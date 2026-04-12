@@ -1,6 +1,7 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::time::Instant;
+use tui_textarea::TextArea;
 
 use crate::db::{cosine_similarity, Database};
 use crate::due_date;
@@ -173,11 +174,10 @@ pub struct App {
     pub selected_todo: usize,
     pub focus: Focus,
     pub mode: Mode,
-    pub input: String,
+    pub input_ta: TextArea<'static>,
     pub search_query: String,
     pub search_results: Vec<(Todo, f32)>,
     pub selected_search_result: usize,
-    pub cursor_pos: usize,
     pub editing: bool,
     pub status_message: Option<String>,
     pub db: Database,
@@ -190,8 +190,7 @@ pub struct App {
     pub todo_sort: TodoSort,
     pub topic_counts: HashMap<i64, (i64, i64)>, // topic_id -> (total, done)
     pub due_popup: bool,
-    pub due_input: String,
-    pub due_cursor: usize,
+    pub due_ta: TextArea<'static>,
     pub detail: Option<DetailState>,
     pub move_popup: bool,
     pub move_popup_selected: usize,
@@ -248,11 +247,10 @@ impl App {
             selected_todo: 0,
             focus: Focus::Topics,
             mode: Mode::Normal,
-            input: String::new(),
+            input_ta: TextArea::default(),
             search_query: String::new(),
             search_results: vec![],
             selected_search_result: 0,
-            cursor_pos: 0,
             editing: false,
             status_message: None,
             db,
@@ -265,8 +263,7 @@ impl App {
             todo_sort: TodoSort::Bucketed,
             topic_counts,
             due_popup: false,
-            due_input: String::new(),
-            due_cursor: 0,
+            due_ta: TextArea::default(),
             detail: None,
             move_popup: false,
             move_popup_selected: 0,
@@ -724,8 +721,11 @@ impl App {
             .get(self.selected_todo)
             .and_then(|t| t.due_date.clone())
             .unwrap_or_default();
-        self.due_input = current.clone();
-        self.due_cursor = current.chars().count();
+        let mut ta = TextArea::default();
+        if !current.is_empty() {
+            ta.insert_str(&current);
+        }
+        self.due_ta = ta;
         self.due_popup = true;
     }
 
@@ -734,7 +734,8 @@ impl App {
             return Ok(());
         };
         let id = todo.id;
-        match due_date::parse(&self.due_input) {
+        let due_str = self.due_ta.lines().first().cloned().unwrap_or_default();
+        match due_date::parse(&due_str) {
             Ok(date) => {
                 let date_str = date.map(|d| d.format("%Y-%m-%d").to_string());
                 self.db.set_todo_due_date(id, date_str.as_deref())?;
@@ -742,8 +743,7 @@ impl App {
                     t.due_date = date_str;
                 }
                 self.due_popup = false;
-                self.due_input.clear();
-                self.due_cursor = 0;
+                self.due_ta = TextArea::default();
             }
             Err(msg) => {
                 self.status_message = Some(msg);
@@ -754,8 +754,7 @@ impl App {
 
     pub fn close_due_popup(&mut self) {
         self.due_popup = false;
-        self.due_input.clear();
-        self.due_cursor = 0;
+        self.due_ta = TextArea::default();
     }
 
     pub fn run_search(&mut self) -> Result<()> {

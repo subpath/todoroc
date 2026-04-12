@@ -26,6 +26,13 @@ pub(super) fn truncate(s: &str, max: usize) -> String {
     }
 }
 
+fn comment_rows(text: &str, field_w: usize) -> usize {
+    if field_w == 0 || text.is_empty() {
+        return 1;
+    }
+    (text.chars().count() + field_w - 1) / field_w
+}
+
 /// Render a 2-row wrapping text area with inline cursor. Returns the row Lines.
 /// `label_fn(row)` returns the label/indent span for each row.
 fn render_multiline_field(
@@ -210,7 +217,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     // Detail popup
     if let Some(d) = &app.detail {
         let dialog_w = size.width.saturating_sub(6).min(90);
-        let dialog_h = size.height.saturating_sub(4).min(26);
+        let dialog_h = size.height.saturating_sub(4).min(18);
         let x = size.x + (size.width.saturating_sub(dialog_w)) / 2;
         let y = size.y + (size.height.saturating_sub(dialog_h)) / 2;
         let area = Rect {
@@ -226,7 +233,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 Style::default().add_modifier(Modifier::BOLD),
             ))
             .title_bottom(Span::styled(
-                " Tab:field  ↑↓:scroll  c:comment  ^Y:copy  Enter:save  Esc:cancel",
+                " ↑↓/Tab:field  c:comment  ^Y:copy  Enter:save  Esc:cancel",
                 Style::default().fg(Color::DarkGray),
             ))
             .borders(Borders::ALL)
@@ -551,11 +558,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 comment.text.as_str()
             };
             let c_cursor = if is_active { d.comment_edit_cursor } else { 0 };
+            let c_rows = comment_rows(c_text, field_w);
             lines.extend(render_multiline_field(
                 c_text,
                 c_cursor,
                 is_active,
-                2,
+                c_rows,
                 field_w,
                 move |_| {
                     Span::styled(
@@ -629,12 +637,14 @@ pub fn draw(frame: &mut Frame, app: &App) {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Yellow));
 
-        let chars: Vec<char> = app.due_input.chars().collect();
-        let before: String = chars[..app.due_cursor.min(chars.len())].iter().collect();
-        let (cursor_ch, after): (String, String) = if app.due_cursor < chars.len() {
+        let due_text = app.due_ta.lines().first().map(|s| s.as_str()).unwrap_or("");
+        let due_cursor = app.due_ta.cursor().1;
+        let chars: Vec<char> = due_text.chars().collect();
+        let before: String = chars[..due_cursor.min(chars.len())].iter().collect();
+        let (cursor_ch, after): (String, String) = if due_cursor < chars.len() {
             (
-                chars[app.due_cursor].to_string(),
-                chars[app.due_cursor + 1..].iter().collect(),
+                chars[due_cursor].to_string(),
+                chars[due_cursor + 1..].iter().collect(),
             )
         } else {
             ("_".to_string(), String::new())
@@ -653,7 +663,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         ]);
 
         // Preview parsed date
-        let preview = match due_date::parse(&app.due_input) {
+        let preview = match due_date::parse(due_text) {
             Ok(Some(d)) => {
                 let (lbl, _) = due_date::label(d);
                 format!("  → {}", lbl)
@@ -661,7 +671,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             Ok(None) => "  → (clear)".to_string(),
             Err(e) => format!("  ✗ {}", e),
         };
-        let preview_color = if app.due_input.is_empty() || due_date::parse(&app.due_input).is_ok() {
+        let preview_color = if due_text.is_empty() || due_date::parse(due_text).is_ok() {
             Color::DarkGray
         } else {
             Color::Red
