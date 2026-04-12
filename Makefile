@@ -2,7 +2,7 @@ BIN     := todo
 INSTALL := $(HOME)/.local/bin
 TARGET  := aarch64-apple-darwin
 
-.PHONY: build release install uninstall run check fmt lint clean sync-gh sync-jira reindex
+.PHONY: build release install uninstall run check fmt lint ci clean sync-gh sync-jira reindex
 
 ## Default: debug build
 build:
@@ -38,6 +38,12 @@ fmt:
 ## Lint with Clippy
 lint:
 	cargo clippy -- -D warnings
+
+## Run all CI checks locally (fmt, clippy, test)
+ci:
+	cargo fmt --check
+	cargo clippy -- -D warnings
+	cargo test
 
 ## Remove build artefacts
 clean:

@@ -41,12 +41,7 @@ pub fn start(kind: SyncKind, db_path: String, model_dir: PathBuf) -> mpsc::Recei
     rx
 }
 
-fn run(
-    kind: SyncKind,
-    db_path: &str,
-    model_dir: &Path,
-    tx: &mpsc::Sender<SyncMsg>,
-) -> Result<()> {
+fn run(kind: SyncKind, db_path: &str, model_dir: &Path, tx: &mpsc::Sender<SyncMsg>) -> Result<()> {
     let db = Database::open(db_path)?;
     let embedder = if model_dir.exists() {
         Embedder::load(model_dir).ok()
