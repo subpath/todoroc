@@ -34,7 +34,7 @@ pub fn parse(input: &str) -> Result<Option<NaiveDate>, String> {
             let mut date = today;
             let mut remaining = n;
             while remaining > 0 {
-                date = date + Duration::days(1);
+                date += Duration::days(1);
                 if date.weekday().num_days_from_monday() < 5 {
                     remaining -= 1;
                 }
@@ -59,7 +59,7 @@ pub fn parse(input: &str) -> Result<Option<NaiveDate>, String> {
         None
     };
     if let Some(week) = week_num {
-        if week >= 1 && week <= 53 {
+        if (1..=53).contains(&week) {
             let year = today.year();
             let date = iso_week_monday(year, week)
                 .filter(|d| *d >= today)
@@ -96,7 +96,9 @@ pub fn parse(input: &str) -> Result<Option<NaiveDate>, String> {
     }
 
     // DD-MM without year — use current year
-    if let Ok(d) = NaiveDate::parse_from_str(&format!("{}-{}", normalized, today.year()), "%d-%m-%Y") {
+    if let Ok(d) =
+        NaiveDate::parse_from_str(&format!("{}-{}", normalized, today.year()), "%d-%m-%Y")
+    {
         return Ok(Some(d));
     }
 
@@ -105,18 +107,21 @@ pub fn parse(input: &str) -> Result<Option<NaiveDate>, String> {
         return Ok(Some(d));
     }
 
-    Err(format!("Can't parse: '{}'. Try: 3d, 3wd, fri, eow, W16, 16w, 20-04-2026", s))
+    Err(format!(
+        "Can't parse: '{}'. Try: 3d, 3wd, fri, eow, W16, 16w, 20-04-2026",
+        s
+    ))
 }
 
 fn parse_weekday(s: &str) -> Option<Weekday> {
     match s {
-        "mon" | "monday"    => Some(Weekday::Mon),
-        "tue" | "tuesday"   => Some(Weekday::Tue),
+        "mon" | "monday" => Some(Weekday::Mon),
+        "tue" | "tuesday" => Some(Weekday::Tue),
         "wed" | "wednesday" => Some(Weekday::Wed),
-        "thu" | "thursday"  => Some(Weekday::Thu),
-        "fri" | "friday"    => Some(Weekday::Fri),
-        "sat" | "saturday"  => Some(Weekday::Sat),
-        "sun" | "sunday"    => Some(Weekday::Sun),
+        "thu" | "thursday" => Some(Weekday::Thu),
+        "fri" | "friday" => Some(Weekday::Fri),
+        "sat" | "saturday" => Some(Weekday::Sat),
+        "sun" | "sunday" => Some(Weekday::Sun),
         _ => None,
     }
 }
@@ -131,10 +136,10 @@ pub fn label(due: NaiveDate) -> (String, Color) {
     let diff = (due - today).num_days();
     match diff {
         i64::MIN..=-1 => (format!("⚠ {}d ago", -diff), Color::Red),
-        0             => ("today".to_string(),           Color::Cyan),
-        1             => ("tmrw".to_string(),            Color::Yellow),
-        2..=6         => (due.format("%a").to_string(),  Color::Yellow),
-        _             => (due.format("%b %-d").to_string(), Color::Gray),
+        0 => ("today".to_string(), Color::Cyan),
+        1 => ("tmrw".to_string(), Color::Yellow),
+        2..=6 => (due.format("%a").to_string(), Color::Yellow),
+        _ => (due.format("%b %-d").to_string(), Color::Gray),
     }
 }
 

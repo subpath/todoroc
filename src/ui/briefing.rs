@@ -1,10 +1,10 @@
 use chrono::NaiveDate;
 use ratatui::{
-    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
+    Frame,
 };
 
 use crate::app::{App, BriefingSection};
@@ -19,7 +19,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let overlay_h = inner_h + 2; // +2 for border
     let overlay_y = size.height.saturating_sub(overlay_h) / 2;
 
-    let area = Rect { x: 0, y: overlay_y, width: size.width, height: overlay_h };
+    let area = Rect {
+        x: 0,
+        y: overlay_y,
+        width: size.width,
+        height: overlay_h,
+    };
 
     let date_label = due_date::current_date_label();
     let block = Block::default()
@@ -64,8 +69,10 @@ fn count_content_rows(app: &App) -> usize {
     let mut count = 0usize;
     let mut prev: Option<&BriefingSection> = None;
     for item in &app.briefing_items {
-        if prev.map_or(true, |s| s != &item.section) {
-            if prev.is_some() { count += 1; } // blank separator
+        if prev != Some(&item.section) {
+            if prev.is_some() {
+                count += 1;
+            } // blank separator
             count += 1; // section header
             prev = Some(&item.section);
         }
@@ -78,29 +85,36 @@ fn find_selected_line(app: &App) -> usize {
     let mut line = 0usize;
     let mut prev: Option<&BriefingSection> = None;
     for (i, item) in app.briefing_items.iter().enumerate() {
-        if prev.map_or(true, |s| s != &item.section) {
-            if prev.is_some() { line += 1; }
+        if prev != Some(&item.section) {
+            if prev.is_some() {
+                line += 1;
+            }
             line += 1;
             prev = Some(&item.section);
         }
-        if i == app.selected_briefing { return line; }
+        if i == app.selected_briefing {
+            return line;
+        }
         line += 1;
     }
     line
 }
 
 fn compute_scroll(selected_line: usize, visible_h: usize) -> usize {
-    if selected_line < visible_h { return 0; }
+    if selected_line < visible_h {
+        return 0;
+    }
     selected_line.saturating_sub(visible_h / 2)
 }
 
 fn strip_url(text: &str) -> String {
     if let Some(start) = text.find("https://").or_else(|| text.find("http://")) {
-        let end = text[start..].find(|c: char| c.is_whitespace())
+        let end = text[start..]
+            .find(|c: char| c.is_whitespace())
             .map(|i| start + i)
             .unwrap_or(text.len());
         let before = text[..start].trim_end();
-        let after  = text[end..].trim_start();
+        let after = text[end..].trim_start();
         return if before.is_empty() {
             after.to_string()
         } else if after.is_empty() {
@@ -118,15 +132,15 @@ fn build_lines(app: &App, width: u16) -> Vec<Line<'static>> {
 
     for (i, item) in app.briefing_items.iter().enumerate() {
         // Section header when section changes
-        if prev_section.as_ref().map_or(true, |s| s != &item.section) {
+        if prev_section.as_ref() != Some(&item.section) {
             if prev_section.is_some() {
                 lines.push(Line::raw(""));
             }
             let (label, color) = match item.section {
-                BriefingSection::MustDo      => ("⚡ Must Do",     Color::Red),
-                BriefingSection::InFlight    => ("🔄 In Flight",   Color::Yellow),
+                BriefingSection::MustDo => ("⚡ Must Do", Color::Red),
+                BriefingSection::InFlight => ("🔄 In Flight", Color::Yellow),
                 BriefingSection::Recommended => ("📋 Recommended", Color::Cyan),
-                BriefingSection::Waiting     => ("⊘ Waiting",     Color::DarkGray),
+                BriefingSection::Waiting => ("⊘ Waiting", Color::DarkGray),
             };
             lines.push(Line::from(Span::styled(
                 format!("  {}", label),
@@ -148,32 +162,50 @@ fn build_lines(app: &App, width: u16) -> Vec<Line<'static>> {
         };
 
         let text_style = if item.todo.done {
-            Style::default().fg(Color::DarkGray).add_modifier(Modifier::CROSSED_OUT)
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::CROSSED_OUT)
         } else if selected {
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::White)
         };
 
         let priority_span: Option<Span<'static>> = match item.todo.priority {
             Some(1) => Some(Span::styled("[!!] ", Style::default().fg(Color::Red))),
-            Some(2) => Some(Span::styled("[!] ",  Style::default().fg(Color::Yellow))),
-            Some(3) => Some(Span::styled("[.] ",  Style::default().fg(Color::Blue))),
-            _       => None,
+            Some(2) => Some(Span::styled("[!] ", Style::default().fg(Color::Yellow))),
+            Some(3) => Some(Span::styled("[.] ", Style::default().fg(Color::Blue))),
+            _ => None,
         };
-        let priority_len = priority_span.as_ref().map(|s| s.content.chars().count()).unwrap_or(0);
+        let priority_len = priority_span
+            .as_ref()
+            .map(|s| s.content.chars().count())
+            .unwrap_or(0);
 
-        let due_badge: Option<(String, Color)> = item.todo.due_date.as_deref()
+        let due_badge: Option<(String, Color)> = item
+            .todo
+            .due_date
+            .as_deref()
             .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
-            .map(|d| { let (l, c) = due_date::label(d); (format!("[{}] ", l), c) });
-        let badge_len = due_badge.as_ref().map(|(s, _)| s.chars().count()).unwrap_or(0);
+            .map(|d| {
+                let (l, c) = due_date::label(d);
+                (format!("[{}] ", l), c)
+            });
+        let badge_len = due_badge
+            .as_ref()
+            .map(|(s, _)| s.chars().count())
+            .unwrap_or(0);
 
         let has_url = item.todo.url.is_some();
         let link_len: usize = if has_url { 2 } else { 0 }; // " ↗"
 
         // Topic display: strip leading emoji/non-ASCII, cap at 12 chars
         let topic_display: String = {
-            let ascii: String = item.topic_name.chars()
+            let ascii: String = item
+                .topic_name
+                .chars()
                 .filter(|c| c.is_ascii() && !c.is_ascii_control())
                 .collect();
             let t = ascii.trim_start().to_string();
@@ -185,26 +217,40 @@ fn build_lines(app: &App, width: u16) -> Vec<Line<'static>> {
         let fixed = 2 + 4 + priority_len + badge_len + link_len + 2 + topic_len;
         let max_text = (width as usize).saturating_sub(fixed);
 
-        let text_src = if has_url { strip_url(&item.todo.text) } else { item.todo.text.clone() };
-        let display  = super::truncate(&text_src, max_text);
+        let text_src = if has_url {
+            strip_url(&item.todo.text)
+        } else {
+            item.todo.text.clone()
+        };
+        let display = super::truncate(&text_src, max_text);
 
         let selector_style = if selected {
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::DarkGray)
         };
 
         let mut spans: Vec<Span<'static>> = vec![
-            Span::styled(if selected { "> " } else { "  " }.to_string(), selector_style),
+            Span::styled(
+                if selected { "> " } else { "  " }.to_string(),
+                selector_style,
+            ),
             Span::styled(format!("{} ", check), check_style),
         ];
-        if let Some(ps) = priority_span { spans.push(ps); }
+        if let Some(ps) = priority_span {
+            spans.push(ps);
+        }
         if let Some((lbl, color)) = due_badge {
             spans.push(Span::styled(lbl, Style::default().fg(color)));
         }
         spans.push(Span::styled(display, text_style));
         if has_url {
-            spans.push(Span::styled(" ↗".to_string(), Style::default().fg(Color::Cyan)));
+            spans.push(Span::styled(
+                " ↗".to_string(),
+                Style::default().fg(Color::Cyan),
+            ));
         }
         spans.push(Span::styled(
             format!("  {}", topic_display),

@@ -12,18 +12,26 @@ fn hf_url(model: &str, file: &str) -> String {
 }
 
 pub fn download_model(model_dir: &PathBuf, model: &str) -> Result<()> {
-    std::fs::create_dir_all(model_dir)
-        .context("Failed to create model directory")?;
+    std::fs::create_dir_all(model_dir).context("Failed to create model directory")?;
 
     println!("Model: {}", model);
     println!();
 
-    download_file(&hf_url(model, "tokenizer.json"), &model_dir.join("tokenizer.json"), "tokenizer.json")?;
-    download_file(&hf_url(model, "onnx/model.onnx"), &model_dir.join("model.onnx"), "model.onnx")?;
+    download_file(
+        &hf_url(model, "tokenizer.json"),
+        &model_dir.join("tokenizer.json"),
+        "tokenizer.json",
+    )?;
+    download_file(
+        &hf_url(model, "onnx/model.onnx"),
+        &model_dir.join("model.onnx"),
+        "model.onnx",
+    )?;
 
     // Save selected model name
     std::fs::write(
-        model_dir.parent()
+        model_dir
+            .parent()
             .context("Model directory has no parent path")?
             .join("model_name.txt"),
         model,
@@ -48,7 +56,7 @@ fn download_file(url: &str, dest: &Path, label: &str) -> Result<()> {
         let pb = ProgressBar::new(total);
         pb.set_style(
             ProgressStyle::with_template(
-                " {msg:20} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})"
+                " {msg:20} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})",
             )
             .unwrap()
             .progress_chars("█▉▊▋▌▍▎▏ "),
@@ -60,7 +68,7 @@ fn download_file(url: &str, dest: &Path, label: &str) -> Result<()> {
         pb.set_style(
             ProgressStyle::with_template(" {msg:20} {spinner:.cyan} {bytes}")
                 .unwrap()
-                .tick_strings(&["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"]),
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
         );
         pb.set_message(label.to_string());
         pb.enable_steady_tick(Duration::from_millis(80));
@@ -74,7 +82,9 @@ fn download_file(url: &str, dest: &Path, label: &str) -> Result<()> {
     let mut buf = [0u8; 16384];
     loop {
         let n = reader.read(&mut buf)?;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         file.write_all(&buf[..n])?;
         pb.inc(n as u64);
     }
@@ -83,7 +93,7 @@ fn download_file(url: &str, dest: &Path, label: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn reindex(db_path: &str, model_dir: &PathBuf) -> Result<()> {
+pub fn reindex(db_path: &str, model_dir: &Path) -> Result<()> {
     let db = Database::open(db_path)?;
     let embedder = Embedder::load(model_dir)
         .context("Failed to load embedder — run `todo-tui --model <name>` first")?;
@@ -99,11 +109,9 @@ pub fn reindex(db_path: &str, model_dir: &PathBuf) -> Result<()> {
 
     let pb = ProgressBar::new(todos.len() as u64);
     pb.set_style(
-        ProgressStyle::with_template(
-            " [{bar:40.green/dark_gray}] {pos}/{len}  {msg}"
-        )
-        .unwrap()
-        .progress_chars("█▉▊▋▌▍▎▏ "),
+        ProgressStyle::with_template(" [{bar:40.green/dark_gray}] {pos}/{len}  {msg}")
+            .unwrap()
+            .progress_chars("█▉▊▋▌▍▎▏ "),
     );
 
     let mut errors = 0usize;
@@ -129,14 +137,22 @@ pub fn reindex(db_path: &str, model_dir: &PathBuf) -> Result<()> {
     pb.finish_and_clear();
 
     if errors > 0 {
-        println!("Done — {} embedded, {} failed.", todos.len() - errors, errors);
+        println!(
+            "Done — {} embedded, {} failed.",
+            todos.len() - errors,
+            errors
+        );
     } else {
         println!("Done — {} todos indexed ✓", todos.len());
     }
     Ok(())
 }
 
-pub fn reindex_headless(db: &Database, embedder: Option<&Embedder>, report: &dyn Fn(&str)) -> Result<()> {
+pub fn reindex_headless(
+    db: &Database,
+    embedder: Option<&Embedder>,
+    report: &dyn Fn(&str),
+) -> Result<()> {
     let Some(embedder) = embedder else {
         report("Reindex: no model loaded, skipping");
         return Ok(());

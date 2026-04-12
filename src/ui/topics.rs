@@ -1,24 +1,31 @@
 use ratatui::{
-    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState},
+    Frame,
 };
 
 use crate::app::{App, Focus, Mode};
 use crate::due_date;
 
 pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
-
     let focused = app.focus == Focus::Topics;
 
-    let (total_all, total_done) = app.topic_counts.iter()
+    let (total_all, total_done) = app
+        .topic_counts
+        .iter()
         .filter(|(id, _)| **id > 0)
-        .fold((0i64, 0i64), |(ta, td), (_, (total, done))| (ta + total, td + done));
+        .fold((0i64, 0i64), |(ta, td), (_, (total, done))| {
+            (ta + total, td + done)
+        });
 
     let stats_str = format!(" [{}/{}]", total_done, total_all);
-    let stats_color = if total_done == total_all && total_all > 0 { Color::Green } else { Color::Gray };
+    let stats_color = if total_done == total_all && total_all > 0 {
+        Color::Green
+    } else {
+        Color::Gray
+    };
 
     let border_style = if focused {
         Style::default().fg(Color::Cyan)
@@ -48,7 +55,14 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             let (count_str, count_color) = if t.id < 0 {
                 (format!(" [{}]", total), Color::Gray)
             } else {
-                (format!(" [{}/{}]", done, total), if done == total && total > 0 { Color::Green } else { Color::Gray })
+                (
+                    format!(" [{}/{}]", done, total),
+                    if done == total && total > 0 {
+                        Color::Green
+                    } else {
+                        Color::Gray
+                    },
+                )
             };
             let count = Span::styled(count_str, Style::default().fg(count_color));
             ListItem::new(Line::from(vec![Span::raw(t.name.clone()), count]))
@@ -69,20 +83,34 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
 
     // Show input line when inserting.
     // Real topics are offset by 1 in `items` due to the separator.
-    let items_offset = |idx: usize| if has_separator && idx >= virtual_count { idx + 1 } else { idx };
+    let items_offset = |idx: usize| {
+        if has_separator && idx >= virtual_count {
+            idx + 1
+        } else {
+            idx
+        }
+    };
 
     if focused && app.mode == Mode::Insert {
         let chars: Vec<char> = app.input.chars().collect();
         let before: String = chars[..app.cursor_pos.min(chars.len())].iter().collect();
         let (cursor_str, after): (String, String) = if app.cursor_pos < chars.len() {
-            (chars[app.cursor_pos].to_string(), chars[app.cursor_pos + 1..].iter().collect())
+            (
+                chars[app.cursor_pos].to_string(),
+                chars[app.cursor_pos + 1..].iter().collect(),
+            )
         } else {
             ("_".to_string(), String::new())
         };
         let input_line = ListItem::new(Line::from(vec![
             Span::styled("> ", Style::default().fg(Color::Cyan)),
             Span::raw(before),
-            Span::styled(cursor_str, Style::default().fg(Color::Cyan).add_modifier(Modifier::SLOW_BLINK)),
+            Span::styled(
+                cursor_str,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::SLOW_BLINK),
+            ),
             Span::raw(after),
         ]));
         let display_idx = items_offset(app.selected_topic);

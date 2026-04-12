@@ -1,10 +1,10 @@
 use chrono::NaiveDate;
 use ratatui::{
-    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState},
+    Frame,
 };
 
 use crate::app::{App, Focus, Mode, TodoSort};
@@ -14,9 +14,12 @@ use crate::due_date;
 fn strip_url(text: &str) -> String {
     let mut result = text.to_string();
     if let Some(start) = text.find("https://").or_else(|| text.find("http://")) {
-        let end = text[start..].find(|c: char| c.is_whitespace()).map(|i| start + i).unwrap_or(text.len());
+        let end = text[start..]
+            .find(|c: char| c.is_whitespace())
+            .map(|i| start + i)
+            .unwrap_or(text.len());
         let before = text[..start].trim_end();
-        let after  = text[end..].trim_start();
+        let after = text[end..].trim_start();
         result = if before.is_empty() {
             after.to_string()
         } else if after.is_empty() {
@@ -61,46 +64,70 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         .iter()
         .map(|t| {
             let (check, check_style, text_style) = if t.done {
-                ("[x]",
-                 Style::default().fg(Color::Green),
-                 Style::default().fg(Color::DarkGray).add_modifier(Modifier::CROSSED_OUT))
+                (
+                    "[x]",
+                    Style::default().fg(Color::Green),
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::CROSSED_OUT),
+                )
             } else if t.in_progress {
-                ("[~]",
-                 Style::default().fg(Color::Yellow),
-                 Style::default().fg(Color::White))
+                (
+                    "[~]",
+                    Style::default().fg(Color::Yellow),
+                    Style::default().fg(Color::White),
+                )
             } else if t.blocked {
-                ("[⊘]",
-                 Style::default().fg(Color::Red),
-                 Style::default().fg(Color::Red))
+                (
+                    "[⊘]",
+                    Style::default().fg(Color::Red),
+                    Style::default().fg(Color::Red),
+                )
             } else {
-                ("[ ]",
-                 Style::default().fg(Color::White),
-                 Style::default())
+                ("[ ]", Style::default().fg(Color::White), Style::default())
             };
             // Build due date badge first so we can account for its width
-            let due_badge: Option<(String, Color)> = t.due_date.as_deref()
+            let due_badge: Option<(String, Color)> = t
+                .due_date
+                .as_deref()
                 .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
-                .map(|d| { let (l, c) = due_date::label(d); (format!("[{}] ", l), c) });
+                .map(|d| {
+                    let (l, c) = due_date::label(d);
+                    (format!("[{}] ", l), c)
+                });
 
             let priority_span = match t.priority {
                 Some(1) => Some(Span::styled("[!!] ", Style::default().fg(Color::Red))),
                 Some(2) => Some(Span::styled("[!] ", Style::default().fg(Color::Yellow))),
                 Some(3) => Some(Span::styled("[.] ", Style::default().fg(Color::Blue))),
-                _       => None,
+                _ => None,
             };
-            let priority_len = priority_span.as_ref().map(|s| s.content.chars().count()).unwrap_or(0);
+            let priority_len = priority_span
+                .as_ref()
+                .map(|s| s.content.chars().count())
+                .unwrap_or(0);
 
             let has_url = t.url.is_some();
-            let display_src = if has_url { strip_url(&t.text) } else { t.text.clone() };
+            let display_src = if has_url {
+                strip_url(&t.text)
+            } else {
+                t.text.clone()
+            };
             let link_label = " link↗";
-            let badge_len = due_badge.as_ref().map(|(s, _)| s.chars().count()).unwrap_or(0);
-            let link_len  = if has_url { link_label.chars().count() } else { 0 };
-            let max_text  = (area.width as usize).saturating_sub(12 + badge_len + priority_len + link_len);
-            let display   = display_text(&display_src, max_text);
+            let badge_len = due_badge
+                .as_ref()
+                .map(|(s, _)| s.chars().count())
+                .unwrap_or(0);
+            let link_len = if has_url {
+                link_label.chars().count()
+            } else {
+                0
+            };
+            let max_text =
+                (area.width as usize).saturating_sub(12 + badge_len + priority_len + link_len);
+            let display = display_text(&display_src, max_text);
 
-            let mut spans = vec![
-                Span::styled(format!("{} ", check), check_style),
-            ];
+            let mut spans = vec![Span::styled(format!("{} ", check), check_style)];
             if let Some(ps) = priority_span {
                 spans.push(ps);
             }
@@ -119,14 +146,22 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         let chars: Vec<char> = app.input.chars().collect();
         let before: String = chars[..app.cursor_pos.min(chars.len())].iter().collect();
         let (cursor_str, after): (String, String) = if app.cursor_pos < chars.len() {
-            (chars[app.cursor_pos].to_string(), chars[app.cursor_pos + 1..].iter().collect())
+            (
+                chars[app.cursor_pos].to_string(),
+                chars[app.cursor_pos + 1..].iter().collect(),
+            )
         } else {
             ("_".to_string(), String::new())
         };
         let input_line = ListItem::new(Line::from(vec![
             Span::styled("[ ] ", Style::default().fg(Color::DarkGray)),
             Span::raw(before),
-            Span::styled(cursor_str, Style::default().fg(Color::Cyan).add_modifier(Modifier::SLOW_BLINK)),
+            Span::styled(
+                cursor_str,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::SLOW_BLINK),
+            ),
             Span::raw(after),
         ]));
         if app.editing && app.selected_todo < items.len() {
@@ -138,7 +173,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
 
     let sort_label = match app.todo_sort {
         TodoSort::Bucketed => "s:sort[bucketed]",
-        TodoSort::Flat     => "s:sort[flat]",
+        TodoSort::Flat => "s:sort[flat]",
     };
     let hint_owned;
     let hint = if focused && app.mode == Mode::Normal {

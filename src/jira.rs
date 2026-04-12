@@ -85,9 +85,8 @@ pub fn sync(db: &Database, embedder: Option<&Embedder>) -> Result<()> {
     let site_base = fetch_site_base_url()
         .context("Could not determine Jira site URL — run `acli jira site list` to verify acli is configured")?;
 
-    let sprint_issues = fetch_issues(
-        "assignee = currentUser() AND sprint in openSprints()"
-    ).context("Failed to fetch current sprint issues")?;
+    let sprint_issues = fetch_issues("assignee = currentUser() AND sprint in openSprints()")
+        .context("Failed to fetch current sprint issues")?;
 
     let backlog_issues = fetch_issues(
         "assignee = currentUser() AND statusCategory != Done AND (sprint is EMPTY OR sprint not in openSprints())"
@@ -104,44 +103,63 @@ pub fn sync(db: &Database, embedder: Option<&Embedder>) -> Result<()> {
     Ok(())
 }
 
-pub fn sync_headless(db: &Database, embedder: Option<&Embedder>, report: &dyn Fn(&str)) -> Result<()> {
+pub fn sync_headless(
+    db: &Database,
+    embedder: Option<&Embedder>,
+    report: &dyn Fn(&str),
+) -> Result<()> {
     db.delete_topic_by_name("🎫 Jira")?;
     report("Jira: fetching issues…");
 
     let site_base = fetch_site_base_url()
         .context("Could not determine Jira site URL — run `acli jira site list` to verify acli is configured")?;
 
-    let sprint_issues = fetch_issues(
-        "assignee = currentUser() AND sprint in openSprints()"
-    )?;
+    let sprint_issues = fetch_issues("assignee = currentUser() AND sprint in openSprints()")?;
     let backlog_issues = fetch_issues(
         "assignee = currentUser() AND statusCategory != Done AND (sprint is EMPTY OR sprint not in openSprints())"
     )?;
 
-    report(&format!("Jira: {} sprint, {} backlog", sprint_issues.len(), backlog_issues.len()));
+    report(&format!(
+        "Jira: {} sprint, {} backlog",
+        sprint_issues.len(),
+        backlog_issues.len()
+    ));
     sync_topic_headless(db, embedder, "🎫 Jira Sprint", &sprint_issues, &site_base)?;
     sync_topic_headless(db, embedder, "🗂  Jira Backlog", &backlog_issues, &site_base)?;
     Ok(())
 }
 
-fn sync_topic_headless(db: &Database, embedder: Option<&Embedder>, topic_name: &str, issues: &[JiraIssue], site_base: &str) -> Result<()> {
+fn sync_topic_headless(
+    db: &Database,
+    embedder: Option<&Embedder>,
+    topic_name: &str,
+    issues: &[JiraIssue],
+    site_base: &str,
+) -> Result<()> {
     let topic = db.find_or_create_topic(topic_name)?;
     let due_dates = fetch_due_dates(issues);
 
     for issue in issues {
-        let text        = format!("{} {}", issue.key, issue.fields.summary);
-        let url         = issue.browse_url(site_base);
-        let done        = issue.is_done();
+        let text = format!("{} {}", issue.key, issue.fields.summary);
+        let url = issue.browse_url(site_base);
+        let done = issue.is_done();
         let in_progress = issue.is_in_progress();
-        let prefix      = format!("{} ", issue.key);
-        let embedding   = embedder.and_then(|e| e.embed(&text).ok());
+        let prefix = format!("{} ", issue.key);
+        let embedding = embedder.and_then(|e| e.embed(&text).ok());
         let todo_id = match db.find_todo_by_prefix(topic.id, &prefix)? {
             Some((id, _)) => {
-                db.update_todo_text_and_done(id, &text, done, Some(url.as_str()), embedding.as_deref())?;
+                db.update_todo_text_and_done(
+                    id,
+                    &text,
+                    done,
+                    Some(url.as_str()),
+                    embedding.as_deref(),
+                )?;
                 id
             }
             None => {
-                let todo = db.insert_todo(topic.id, &text, Some(url.as_str()), embedding.as_deref())?;
+                let todo =
+                    db.insert_todo(topic.id, &text, Some(url.as_str()), embedding.as_deref())?;
                 todo.id
             }
         };
@@ -155,7 +173,9 @@ fn sync_topic_headless(db: &Database, embedder: Option<&Embedder>, topic_name: &
 
 fn fetch_issues(jql: &str) -> Result<Vec<JiraIssue>> {
     let output = Command::new("acli")
-        .args(["jira", "workitem", "search", "--jql", jql, "--json", "--limit", "50"])
+        .args([
+            "jira", "workitem", "search", "--jql", jql, "--json", "--limit", "50",
+        ])
         .output()
         .context("Failed to run `acli` — is the Atlassian CLI installed and authenticated?")?;
 
@@ -165,8 +185,8 @@ fn fetch_issues(jql: &str) -> Result<Vec<JiraIssue>> {
     }
 
     let json = String::from_utf8(output.stdout)?;
-    let issues: Vec<JiraIssue> = serde_json::from_str(&json)
-        .context("Failed to parse acli JSON output")?;
+    let issues: Vec<JiraIssue> =
+        serde_json::from_str(&json).context("Failed to parse acli JSON output")?;
     Ok(issues)
 }
 
@@ -174,12 +194,28 @@ fn fetch_due_dates(issues: &[JiraIssue]) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for issue in issues {
         let Ok(output) = Command::new("acli")
-            .args(["jira", "workitem", "view", &issue.key, "--fields", "key,duedate", "--json"])
+            .args([
+                "jira",
+                "workitem",
+                "view",
+                &issue.key,
+                "--fields",
+                "key,duedate",
+                "--json",
+            ])
             .output()
-        else { continue };
-        if !output.status.success() { continue; }
-        let Ok(json) = String::from_utf8(output.stdout) else { continue };
-        let Ok(parsed) = serde_json::from_str::<DueDateIssue>(&json) else { continue };
+        else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let Ok(json) = String::from_utf8(output.stdout) else {
+            continue;
+        };
+        let Ok(parsed) = serde_json::from_str::<DueDateIssue>(&json) else {
+            continue;
+        };
         if let Some(due) = parsed.fields.due_date {
             map.insert(parsed.key, due);
         }
@@ -187,17 +223,21 @@ fn fetch_due_dates(issues: &[JiraIssue]) -> HashMap<String, String> {
     map
 }
 
-fn sync_topic(db: &Database, embedder: Option<&Embedder>, topic_name: &str, issues: &[JiraIssue], site_base: &str) -> Result<()> {
+fn sync_topic(
+    db: &Database,
+    embedder: Option<&Embedder>,
+    topic_name: &str,
+    issues: &[JiraIssue],
+    site_base: &str,
+) -> Result<()> {
     let topic = db.find_or_create_topic(topic_name)?;
 
     let pb = ProgressBar::new(issues.len() as u64);
     pb.set_style(
-        ProgressStyle::with_template(
-            " {spinner:.cyan} {msg:<20} [{bar:30.cyan/blue}] {pos}/{len}"
-        )
-        .unwrap()
-        .progress_chars("█▉▊▋▌▍▎▏ ")
-        .tick_strings(&["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"]),
+        ProgressStyle::with_template(" {spinner:.cyan} {msg:<20} [{bar:30.cyan/blue}] {pos}/{len}")
+            .unwrap()
+            .progress_chars("█▉▊▋▌▍▎▏ ")
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
     );
     pb.enable_steady_tick(Duration::from_millis(80));
 
@@ -210,21 +250,28 @@ fn sync_topic(db: &Database, embedder: Option<&Embedder>, topic_name: &str, issu
     for issue in issues {
         pb.set_message(issue.key.clone());
 
-        let text        = format!("{} {}", issue.key, issue.fields.summary);
-        let url         = issue.browse_url(site_base);
-        let done        = issue.is_done();
+        let text = format!("{} {}", issue.key, issue.fields.summary);
+        let url = issue.browse_url(site_base);
+        let done = issue.is_done();
         let in_progress = issue.is_in_progress();
-        let prefix      = format!("{} ", issue.key);
-        let embedding   = embedder.and_then(|e| e.embed(&text).ok());
+        let prefix = format!("{} ", issue.key);
+        let embedding = embedder.and_then(|e| e.embed(&text).ok());
 
         let todo_id = match db.find_todo_by_prefix(topic.id, &prefix)? {
             Some((id, _)) => {
-                db.update_todo_text_and_done(id, &text, done, Some(url.as_str()), embedding.as_deref())?;
+                db.update_todo_text_and_done(
+                    id,
+                    &text,
+                    done,
+                    Some(url.as_str()),
+                    embedding.as_deref(),
+                )?;
                 updated += 1;
                 id
             }
             None => {
-                let todo = db.insert_todo(topic.id, &text, Some(url.as_str()), embedding.as_deref())?;
+                let todo =
+                    db.insert_todo(topic.id, &text, Some(url.as_str()), embedding.as_deref())?;
                 added += 1;
                 todo.id
             }

@@ -1,10 +1,10 @@
 use chrono::NaiveDate;
 use ratatui::{
-    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
+    Frame,
 };
 
 use crate::app::App;
@@ -23,9 +23,12 @@ fn topic_alias(name: &str) -> String {
 fn strip_url(text: &str) -> String {
     let mut result = text.to_string();
     if let Some(start) = text.find("https://").or_else(|| text.find("http://")) {
-        let end = text[start..].find(|c: char| c.is_whitespace()).map(|i| start + i).unwrap_or(text.len());
+        let end = text[start..]
+            .find(|c: char| c.is_whitespace())
+            .map(|i| start + i)
+            .unwrap_or(text.len());
         let before = text[..start].trim_end();
-        let after  = text[end..].trim_start();
+        let after = text[end..].trim_start();
         result = if before.is_empty() {
             after.to_string()
         } else if after.is_empty() {
@@ -63,7 +66,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
     };
 
     let block = Block::default()
-        .title(Span::styled(title, Style::default().add_modifier(Modifier::BOLD)))
+        .title(Span::styled(
+            title,
+            Style::default().add_modifier(Modifier::BOLD),
+        ))
         .title_bottom(Span::styled(hint, Style::default().fg(Color::DarkGray)))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
@@ -82,7 +88,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let query_para = Paragraph::new(Line::from(vec![
         Span::styled("Search: ", Style::default().fg(Color::DarkGray)),
         Span::styled(app.search_query.clone(), Style::default().fg(Color::White)),
-        Span::styled("_", Style::default().fg(Color::Cyan).add_modifier(Modifier::SLOW_BLINK)),
+        Span::styled(
+            "_",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::SLOW_BLINK),
+        ),
         if pending {
             Span::styled("  …", Style::default().fg(Color::DarkGray))
         } else if app.search_query.is_empty() {
@@ -96,7 +107,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
     if app.search_results.is_empty() {
         if !app.search_query.is_empty() && !pending {
             frame.render_widget(
-                Paragraph::new(Span::styled("No results found.", Style::default().fg(Color::DarkGray))),
+                Paragraph::new(Span::styled(
+                    "No results found.",
+                    Style::default().fg(Color::DarkGray),
+                )),
                 layout[1],
             );
         }
@@ -124,36 +138,57 @@ pub fn draw(frame: &mut Frame, app: &App) {
             };
 
             let text_style = if todo.done {
-                Style::default().fg(Color::DarkGray).add_modifier(Modifier::CROSSED_OUT)
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::CROSSED_OUT)
             } else {
                 Style::default()
             };
 
             let priority_span: Option<Span> = match todo.priority {
                 Some(1) => Some(Span::styled("[!!] ", Style::default().fg(Color::Red))),
-                Some(2) => Some(Span::styled("[!] ",  Style::default().fg(Color::Yellow))),
-                Some(3) => Some(Span::styled("[.] ",  Style::default().fg(Color::Blue))),
-                _       => None,
+                Some(2) => Some(Span::styled("[!] ", Style::default().fg(Color::Yellow))),
+                Some(3) => Some(Span::styled("[.] ", Style::default().fg(Color::Blue))),
+                _ => None,
             };
 
-            let due_badge: Option<(String, Color)> = todo.due_date.as_deref()
+            let due_badge: Option<(String, Color)> = todo
+                .due_date
+                .as_deref()
                 .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
-                .map(|d| { let (l, c) = due_date::label(d); (format!("[{}] ", l), c) });
+                .map(|d| {
+                    let (l, c) = due_date::label(d);
+                    (format!("[{}] ", l), c)
+                });
 
             // Dim separator used between score · alias · item info
             let sep = Span::styled(" · ", Style::default().fg(Color::from_u32(0x383838)));
 
-            let priority_len = priority_span.as_ref().map(|s| s.content.chars().count()).unwrap_or(0);
-            let badge_len    = due_badge.as_ref().map(|(s, _)| s.chars().count()).unwrap_or(0);
-            let has_url      = todo.url.is_some();
-            let link_label   = " link↗";
-            let link_len     = if has_url { link_label.chars().count() } else { 0 };
+            let priority_len = priority_span
+                .as_ref()
+                .map(|s| s.content.chars().count())
+                .unwrap_or(0);
+            let badge_len = due_badge
+                .as_ref()
+                .map(|(s, _)| s.chars().count())
+                .unwrap_or(0);
+            let has_url = todo.url.is_some();
+            let link_label = " link↗";
+            let link_len = if has_url {
+                link_label.chars().count()
+            } else {
+                0
+            };
 
             // overhead: "> "(2) + score(4) + " · "(3) + alias(16) + " · "(3) + check+space(4) + priority + due + url
             let overhead = 2 + 4 + 3 + 16 + 3 + 4 + priority_len + badge_len + link_len;
             let max_text = (area.width as usize).saturating_sub(overhead);
 
-            let display_src = if has_url { strip_url(&todo.text) } else { todo.text.clone() };
+            let display_src = if has_url {
+                strip_url(&todo.text)
+            } else {
+                todo.text.clone()
+            };
 
             let mut spans = vec![
                 Span::styled(format!("{:.2}", score), Style::default().fg(Color::Yellow)),
@@ -168,7 +203,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
             if let Some((lbl, color)) = due_badge {
                 spans.push(Span::styled(lbl, Style::default().fg(color)));
             }
-            spans.push(Span::styled(super::truncate(&display_src, max_text), text_style));
+            spans.push(Span::styled(
+                super::truncate(&display_src, max_text),
+                text_style,
+            ));
             if has_url {
                 spans.push(Span::styled(link_label, Style::default().fg(Color::Cyan)));
             }
@@ -182,7 +220,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     let list = List::new(items)
         .highlight_style(
-            Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("> ");
     frame.render_stateful_widget(list, layout[1], &mut state);

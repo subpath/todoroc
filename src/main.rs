@@ -9,26 +9,21 @@ mod setup;
 mod sync;
 mod ui;
 
-use std::{
-    fs,
-    io,
-    path::PathBuf,
-    time::Duration,
-};
+use std::{fs, io, path::PathBuf, time::Duration};
 
 use anyhow::Result;
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{Terminal, backend::CrosstermBackend};
+use ratatui::{backend::CrosstermBackend, Terminal};
 
 use app::{App, AppInfo, DetailField, Focus, Mode};
-use std::time::Instant;
-use sync::SyncKind;
 use db::Database;
 use embeddings::Embedder;
+use std::time::Instant;
+use sync::SyncKind;
 
 fn data_dir() -> PathBuf {
     let dir = dirs_home().join(".todo-tui");
@@ -48,7 +43,8 @@ fn main() -> Result<()> {
 
     // --model <hf-repo>  →  download and activate model
     if let Some(pos) = args.iter().position(|a| a == "--model") {
-        let model = args.get(pos + 1)
+        let model = args
+            .get(pos + 1)
             .map(|s| s.as_str())
             .unwrap_or("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2");
         setup::download_model(&dir.join("model"), model)?;
@@ -57,11 +53,14 @@ fn main() -> Result<()> {
 
     // --setup  →  download default model (kept for backwards compat)
     if args.iter().any(|a| a == "--setup") {
-        setup::download_model(&dir.join("model"), "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")?;
+        setup::download_model(
+            &dir.join("model"),
+            "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        )?;
         return Ok(());
     }
 
-// --reindex  →  re-embed all todos with current model
+    // --reindex  →  re-embed all todos with current model
     if args.iter().any(|a| a == "--reindex") {
         let db_path = dir.join("todos.db");
         setup::reindex(db_path.to_str().unwrap(), &dir.join("model"))?;
@@ -90,7 +89,11 @@ fn main() -> Result<()> {
         let db_path = dir.join("todos.db");
         let model_dir = dir.join("model");
         let db = Database::open(db_path.to_str().unwrap())?;
-        let embedder = if model_dir.exists() { Embedder::load(&model_dir).ok() } else { None };
+        let embedder = if model_dir.exists() {
+            Embedder::load(&model_dir).ok()
+        } else {
+            None
+        };
 
         println!("━━━ GitHub ━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         github::sync(&db, embedder.as_ref())?;
@@ -108,7 +111,11 @@ fn main() -> Result<()> {
         let db_path = dir.join("todos.db");
         let db = Database::open(db_path.to_str().unwrap())?;
         let model_dir = dir.join("model");
-        let embedder = if model_dir.exists() { Embedder::load(&model_dir).ok() } else { None };
+        let embedder = if model_dir.exists() {
+            Embedder::load(&model_dir).ok()
+        } else {
+            None
+        };
         jira::sync(&db, embedder.as_ref())?;
         return Ok(());
     }
@@ -134,10 +141,12 @@ fn main() -> Result<()> {
     // Try to load embedder; if model files missing, run without search
     let model_dir = dir.join("model");
     let model_name = std::fs::read_to_string(dir.join("model_name.txt"))
-        .unwrap_or_else(|_| if model_dir.exists() {
-            "unknown (run --model to set)".into()
-        } else {
-            "none".into()
+        .unwrap_or_else(|_| {
+            if model_dir.exists() {
+                "unknown (run --model to set)".into()
+            } else {
+                "none".into()
+            }
         })
         .trim()
         .to_string();
@@ -174,10 +183,7 @@ fn main() -> Result<()> {
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = crossterm::terminal::disable_raw_mode();
-        let _ = crossterm::execute!(
-            std::io::stdout(),
-            crossterm::terminal::LeaveAlternateScreen,
-        );
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen,);
         original_hook(info);
     }));
 
@@ -205,9 +211,15 @@ fn show_overdue_digest(app: &App) -> Result<()> {
     }
 
     let today = chrono::Local::now().date_naive();
-    println!("\n  ⚠  {} overdue item{}\n", overdue.len(), if overdue.len() == 1 { "" } else { "s" });
+    println!(
+        "\n  ⚠  {} overdue item{}\n",
+        overdue.len(),
+        if overdue.len() == 1 { "" } else { "s" }
+    );
     for (todo, topic) in &overdue {
-        let days_ago = todo.due_date.as_deref()
+        let days_ago = todo
+            .due_date
+            .as_deref()
             .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
             .map(|d| (today - d).num_days())
             .unwrap_or(0);
@@ -215,7 +227,7 @@ fn show_overdue_digest(app: &App) -> Result<()> {
             Some(1) => " !1",
             Some(2) => " !2",
             Some(3) => " !3",
-            _       => "",
+            _ => "",
         };
         println!("  {}d ago{}  [{}]  {}", days_ago, pri, topic, todo.text);
     }
@@ -225,10 +237,7 @@ fn show_overdue_digest(app: &App) -> Result<()> {
     Ok(())
 }
 
-fn run_loop(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    app: &mut App,
-) -> Result<()> {
+fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
     loop {
         app.poll_sync()?;
 
@@ -284,14 +293,14 @@ fn run_loop(
 
 fn handle_confirm_delete(app: &mut App, key: KeyCode) -> Result<()> {
     match key {
-        KeyCode::Char('y') | KeyCode::Enter => {
-            match app.confirm_delete.take() {
-                Some(Focus::Topics) => app.delete_topic()?,
-                Some(Focus::Todos)  => app.delete_todo()?,
-                _ => {}
-            }
+        KeyCode::Char('y') | KeyCode::Enter => match app.confirm_delete.take() {
+            Some(Focus::Topics) => app.delete_topic()?,
+            Some(Focus::Todos) => app.delete_todo()?,
+            _ => {}
+        },
+        _ => {
+            app.confirm_delete = None;
         }
-        _ => { app.confirm_delete = None; }
     }
     Ok(())
 }
@@ -309,7 +318,9 @@ fn insert_char_at(s: &mut String, pos: usize, c: char) {
 }
 
 fn delete_char_before(s: &mut String, pos: usize) -> bool {
-    if pos == 0 { return false; }
+    if pos == 0 {
+        return false;
+    }
     if let Some((byte_pos, _)) = s.char_indices().nth(pos - 1) {
         s.remove(byte_pos);
         true
@@ -366,19 +377,25 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
         KeyCode::Char('q') => app.confirm_quit = true,
         KeyCode::Char('i') => app.show_info = true,
 
-        KeyCode::Char('1') => { app.focus = Focus::Topics; app.mode = Mode::Normal; }
-        KeyCode::Char('2') => { app.focus = Focus::Todos; app.mode = Mode::Normal; }
+        KeyCode::Char('1') => {
+            app.focus = Focus::Topics;
+            app.mode = Mode::Normal;
+        }
+        KeyCode::Char('2') => {
+            app.focus = Focus::Todos;
+            app.mode = Mode::Normal;
+        }
 
         KeyCode::Tab => {
             app.focus = match app.focus {
                 Focus::Topics => Focus::Todos,
-                Focus::Todos  => Focus::Topics,
+                Focus::Todos => Focus::Topics,
             };
         }
         KeyCode::BackTab => {
             app.focus = match app.focus {
                 Focus::Topics => Focus::Todos,
-                Focus::Todos  => Focus::Topics,
+                Focus::Todos => Focus::Topics,
             };
         }
 
@@ -387,8 +404,16 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
         KeyCode::Down if modifiers.contains(KeyModifiers::SHIFT) => app.nav_bottom(),
         KeyCode::Up | KeyCode::Char('k') => app.nav_up(),
         KeyCode::Down | KeyCode::Char('j') => app.nav_down(),
-        KeyCode::Left  => { if app.focus == Focus::Todos  { app.focus = Focus::Topics; } }
-        KeyCode::Right => { if app.focus == Focus::Topics { app.focus = Focus::Todos;  } }
+        KeyCode::Left => {
+            if app.focus == Focus::Todos {
+                app.focus = Focus::Topics;
+            }
+        }
+        KeyCode::Right => {
+            if app.focus == Focus::Topics {
+                app.focus = Focus::Todos;
+            }
+        }
 
         // / opens the search overlay
         KeyCode::Char('/') => {
@@ -411,26 +436,24 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
             }
         }
 
-        KeyCode::Char('e') => {
-            match app.focus {
-                Focus::Topics => {
-                    if let Some(topic) = app.topics.get(app.selected_topic) {
-                        app.input = topic.name.clone();
-                        app.cursor_pos = app.input.chars().count();
-                        app.editing = true;
-                        app.mode = Mode::Insert;
-                    }
-                }
-                Focus::Todos => {
-                    if let Some(todo) = app.todos.get(app.selected_todo) {
-                        app.input = todo.text.clone();
-                        app.cursor_pos = app.input.chars().count();
-                        app.editing = true;
-                        app.mode = Mode::Insert;
-                    }
+        KeyCode::Char('e') => match app.focus {
+            Focus::Topics => {
+                if let Some(topic) = app.topics.get(app.selected_topic) {
+                    app.input = topic.name.clone();
+                    app.cursor_pos = app.input.chars().count();
+                    app.editing = true;
+                    app.mode = Mode::Insert;
                 }
             }
-        }
+            Focus::Todos => {
+                if let Some(todo) = app.todos.get(app.selected_todo) {
+                    app.input = todo.text.clone();
+                    app.cursor_pos = app.input.chars().count();
+                    app.editing = true;
+                    app.mode = Mode::Insert;
+                }
+            }
+        },
 
         KeyCode::Char('d') => match app.focus {
             Focus::Topics if !app.topics.is_empty() && !app.is_virtual_topic() => {
@@ -518,8 +541,10 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
 fn handle_briefing(app: &mut App, key: KeyCode) -> Result<()> {
     match key {
         KeyCode::Esc | KeyCode::Char('q') => app.close_briefing(),
-        KeyCode::Up   | KeyCode::Char('k') => {
-            if app.selected_briefing > 0 { app.selected_briefing -= 1; }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.selected_briefing > 0 {
+                app.selected_briefing -= 1;
+            }
         }
         KeyCode::Down | KeyCode::Char('j') => {
             if app.selected_briefing + 1 < app.briefing_items.len() {
@@ -538,20 +563,25 @@ fn handle_briefing(app: &mut App, key: KeyCode) -> Result<()> {
 
 fn field_scroll_target(field: &DetailField) -> u16 {
     match field {
-        DetailField::Text               => 0,
-        DetailField::Priority           => 3,
-        DetailField::Due                => 5,
-        DetailField::Url                => 8,
-        DetailField::NewComment         => 11,
+        DetailField::Text => 0,
+        DetailField::Priority => 3,
+        DetailField::Due => 5,
+        DetailField::Url => 8,
+        DetailField::NewComment => 11,
         DetailField::ExistingComment(i) => 14 + (*i as u16) * 4,
     }
 }
 
 fn handle_detail(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
-    let Some(d) = app.detail.as_ref() else { return Ok(()); };
+    let Some(d) = app.detail.as_ref() else {
+        return Ok(());
+    };
 
     match key {
-        KeyCode::Esc => { app.close_detail(); return Ok(()); }
+        KeyCode::Esc => {
+            app.close_detail();
+            return Ok(());
+        }
         KeyCode::Enter => {
             match &d.field.clone() {
                 DetailField::NewComment => {
@@ -563,16 +593,23 @@ fn handle_detail(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
                     app.save_comment_edit()?;
                     return Ok(());
                 }
-                _ => { app.confirm_detail()?; return Ok(()); }
+                _ => {
+                    app.confirm_detail()?;
+                    return Ok(());
+                }
             }
         }
         KeyCode::Tab => {
-            let Some(d) = app.detail.as_ref() else { return Ok(()); };
+            let Some(d) = app.detail.as_ref() else {
+                return Ok(());
+            };
             let next_field = d.field.next(d.comments.len());
             if matches!(d.field, DetailField::ExistingComment(_)) {
                 app.save_comment_edit()?;
             }
-            let Some(d) = app.detail.as_mut() else { return Ok(()); };
+            let Some(d) = app.detail.as_mut() else {
+                return Ok(());
+            };
             d.field = next_field.clone();
             d.detail_scroll = field_scroll_target(&next_field);
             if let DetailField::ExistingComment(i) = &next_field {
@@ -581,12 +618,16 @@ fn handle_detail(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
             return Ok(());
         }
         KeyCode::BackTab => {
-            let Some(d) = app.detail.as_ref() else { return Ok(()); };
+            let Some(d) = app.detail.as_ref() else {
+                return Ok(());
+            };
             let prev_field = d.field.prev(d.comments.len());
             if matches!(d.field, DetailField::ExistingComment(_)) {
                 app.save_comment_edit()?;
             }
-            let Some(d) = app.detail.as_mut() else { return Ok(()); };
+            let Some(d) = app.detail.as_mut() else {
+                return Ok(());
+            };
             d.field = prev_field.clone();
             d.detail_scroll = field_scroll_target(&prev_field);
             if let DetailField::ExistingComment(i) = &prev_field {
@@ -640,7 +681,10 @@ fn handle_detail(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
             return Ok(());
         }
         KeyCode::Char('c') => {
-            if matches!(app.detail.as_ref().map(|d| &d.field), Some(DetailField::NewComment)) {
+            if matches!(
+                app.detail.as_ref().map(|d| &d.field),
+                Some(DetailField::NewComment)
+            ) {
                 // already there — do nothing, fall through to edit
             } else {
                 if let Some(d) = app.detail.as_mut() {
@@ -656,7 +700,9 @@ fn handle_detail(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
             }
         }
         KeyCode::Char('d') | KeyCode::Delete => {
-            let Some(d) = app.detail.as_ref() else { return Ok(()); };
+            let Some(d) = app.detail.as_ref() else {
+                return Ok(());
+            };
             if matches!(d.field, DetailField::ExistingComment(_)) {
                 app.delete_selected_comment()?;
                 return Ok(());
@@ -665,34 +711,53 @@ fn handle_detail(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
         _ => {}
     }
 
-    let Some(d) = app.detail.as_mut() else { return Ok(()); };
+    let Some(d) = app.detail.as_mut() else {
+        return Ok(());
+    };
     match d.field.clone() {
         DetailField::Priority => match key {
             KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') => {
                 d.priority = match d.priority {
-                    None     => Some(1),
-                    Some(1)  => Some(2),
-                    Some(2)  => Some(3),
-                    _        => None,
+                    None => Some(1),
+                    Some(1) => Some(2),
+                    Some(2) => Some(3),
+                    _ => None,
                 };
             }
             _ => {}
         },
         DetailField::Text => edit_field(&mut d.text, &mut d.text_cursor, key),
-        DetailField::Due  => edit_field(&mut d.due,  &mut d.due_cursor,  key),
-        DetailField::Url  => edit_field(&mut d.url,  &mut d.url_cursor,  key),
+        DetailField::Due => edit_field(&mut d.due, &mut d.due_cursor, key),
+        DetailField::Url => edit_field(&mut d.url, &mut d.url_cursor, key),
         DetailField::NewComment => edit_field(&mut d.new_comment, &mut d.new_comment_cursor, key),
-        DetailField::ExistingComment(_) => edit_field(&mut d.comment_edit_text, &mut d.comment_edit_cursor, key),
+        DetailField::ExistingComment(_) => {
+            edit_field(&mut d.comment_edit_text, &mut d.comment_edit_cursor, key)
+        }
     }
     Ok(())
 }
 
 fn edit_field(text: &mut String, cursor: &mut usize, key: KeyCode) {
     match key {
-        KeyCode::Backspace => { if delete_char_before(text, *cursor) { *cursor -= 1; } }
-        KeyCode::Left  => { if *cursor > 0 { *cursor -= 1; } }
-        KeyCode::Right => { if *cursor < text.chars().count() { *cursor += 1; } }
-        KeyCode::Char(c) => { insert_char_at(text, *cursor, c); *cursor += 1; }
+        KeyCode::Backspace => {
+            if delete_char_before(text, *cursor) {
+                *cursor -= 1;
+            }
+        }
+        KeyCode::Left => {
+            if *cursor > 0 {
+                *cursor -= 1;
+            }
+        }
+        KeyCode::Right => {
+            if *cursor < text.chars().count() {
+                *cursor += 1;
+            }
+        }
+        KeyCode::Char(c) => {
+            insert_char_at(text, *cursor, c);
+            *cursor += 1;
+        }
         _ => {}
     }
 }
@@ -707,10 +772,14 @@ fn handle_due_popup(app: &mut App, key: KeyCode) -> Result<()> {
             }
         }
         KeyCode::Left => {
-            if app.due_cursor > 0 { app.due_cursor -= 1; }
+            if app.due_cursor > 0 {
+                app.due_cursor -= 1;
+            }
         }
         KeyCode::Right => {
-            if app.due_cursor < app.due_input.chars().count() { app.due_cursor += 1; }
+            if app.due_cursor < app.due_input.chars().count() {
+                app.due_cursor += 1;
+            }
         }
         KeyCode::Char(c) => {
             insert_char_at(&mut app.due_input, app.due_cursor, c);
@@ -733,10 +802,14 @@ fn handle_sync_popup(app: &mut App, key: KeyCode) -> Result<()> {
             app.start_sync(kind);
         }
         KeyCode::Up | KeyCode::Char('k') => {
-            if app.sync_popup_selected > 0 { app.sync_popup_selected -= 1; }
+            if app.sync_popup_selected > 0 {
+                app.sync_popup_selected -= 1;
+            }
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            if app.sync_popup_selected < 2 { app.sync_popup_selected += 1; }
+            if app.sync_popup_selected < 2 {
+                app.sync_popup_selected += 1;
+            }
         }
         _ => {}
     }
@@ -777,12 +850,18 @@ fn handle_insert(app: &mut App, key: KeyCode) -> Result<()> {
             if !text.is_empty() {
                 match app.focus {
                     Focus::Topics => {
-                        if app.editing { app.update_topic(&text)?; }
-                        else           { app.add_topic(&text)?; }
+                        if app.editing {
+                            app.update_topic(&text)?;
+                        } else {
+                            app.add_topic(&text)?;
+                        }
                     }
                     Focus::Todos => {
-                        if app.editing { app.update_todo(&text)?; }
-                        else           { app.add_todo(&text)?; }
+                        if app.editing {
+                            app.update_todo(&text)?;
+                        } else {
+                            app.add_todo(&text)?;
+                        }
                     }
                 }
             }
@@ -799,11 +878,15 @@ fn handle_insert(app: &mut App, key: KeyCode) -> Result<()> {
         }
 
         KeyCode::Left => {
-            if app.cursor_pos > 0 { app.cursor_pos -= 1; }
+            if app.cursor_pos > 0 {
+                app.cursor_pos -= 1;
+            }
         }
 
         KeyCode::Right => {
-            if app.cursor_pos < app.input.chars().count() { app.cursor_pos += 1; }
+            if app.cursor_pos < app.input.chars().count() {
+                app.cursor_pos += 1;
+            }
         }
 
         KeyCode::Char(c) => {

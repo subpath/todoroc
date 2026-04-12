@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 use rusqlite_migration::{Migrations, M};
 
 use crate::models::{Todo, Topic};
@@ -67,35 +67,54 @@ impl Database {
     // --- Topics ---
 
     pub fn find_or_create_topic(&self, name: &str) -> Result<Topic> {
-        let existing: Option<(i64, String)> = self.conn.query_row(
-            "SELECT id, name FROM topics WHERE name = ?1",
-            params![name],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        ).optional()?;
+        let existing: Option<(i64, String)> = self
+            .conn
+            .query_row(
+                "SELECT id, name FROM topics WHERE name = ?1",
+                params![name],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
         if let Some((id, name)) = existing {
             return Ok(Topic { id, name });
         }
         self.conn.execute("INSERT INTO topics (name, sort_order) VALUES (?1, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM topics))", params![name])?;
-        Ok(Topic { id: self.conn.last_insert_rowid(), name: name.to_string() })
+        Ok(Topic {
+            id: self.conn.last_insert_rowid(),
+            name: name.to_string(),
+        })
     }
 
     /// Find a todo in a topic whose text starts with a given prefix.
     pub fn find_todo_by_prefix(&self, topic_id: i64, prefix: &str) -> Result<Option<(i64, bool)>> {
         let pattern = format!("{}%", prefix);
-        let result = self.conn.query_row(
-            "SELECT id, done FROM todos WHERE topic_id = ?1 AND text LIKE ?2",
-            params![topic_id, pattern],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        ).optional()?;
+        let result = self
+            .conn
+            .query_row(
+                "SELECT id, done FROM todos WHERE topic_id = ?1 AND text LIKE ?2",
+                params![topic_id, pattern],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
         Ok(result)
     }
 
     pub fn update_topic_name(&self, id: i64, name: &str) -> Result<()> {
-        self.conn.execute("UPDATE topics SET name = ?1 WHERE id = ?2", params![name, id])?;
+        self.conn.execute(
+            "UPDATE topics SET name = ?1 WHERE id = ?2",
+            params![name, id],
+        )?;
         Ok(())
     }
 
-    pub fn update_todo_text_and_done(&self, id: i64, text: &str, done: bool, url: Option<&str>, embedding: Option<&[f32]>) -> Result<()> {
+    pub fn update_todo_text_and_done(
+        &self,
+        id: i64,
+        text: &str,
+        done: bool,
+        url: Option<&str>,
+        embedding: Option<&[f32]>,
+    ) -> Result<()> {
         let blob = embedding.map(encode_embedding);
         self.conn.execute(
             "UPDATE todos SET text = ?1, done = ?2, url = ?3, embedding = COALESCE(?4, embedding) WHERE id = ?5",
@@ -105,12 +124,14 @@ impl Database {
     }
 
     pub fn clear(&self) -> Result<()> {
-        self.conn.execute_batch("DELETE FROM todos; DELETE FROM topics;")?;
+        self.conn
+            .execute_batch("DELETE FROM todos; DELETE FROM topics;")?;
         Ok(())
     }
 
     pub fn delete_topic_by_name(&self, name: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM topics WHERE name = ?1", params![name])?;
+        self.conn
+            .execute("DELETE FROM topics WHERE name = ?1", params![name])?;
         Ok(())
     }
 
@@ -121,29 +142,43 @@ impl Database {
             params![name, blob],
         )?;
         let id = self.conn.last_insert_rowid();
-        Ok(Topic { id, name: name.to_string() })
+        Ok(Topic {
+            id,
+            name: name.to_string(),
+        })
     }
 
     pub fn delete_topic(&self, id: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM topics WHERE id = ?1", params![id])?;
+        self.conn
+            .execute("DELETE FROM topics WHERE id = ?1", params![id])?;
         Ok(())
     }
 
     pub fn list_topics(&self) -> Result<Vec<Topic>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, name FROM topics ORDER BY sort_order, id"
-        )?;
-        let topics = stmt.query_map([], |row| {
-            Ok(Topic { id: row.get(0)?, name: row.get(1)? })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .context("Failed to list topics")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, name FROM topics ORDER BY sort_order, id")?;
+        let topics = stmt
+            .query_map([], |row| {
+                Ok(Topic {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("Failed to list topics")?;
         Ok(topics)
     }
 
     // --- Todos ---
 
-    pub fn insert_todo(&self, topic_id: i64, text: &str, url: Option<&str>, embedding: Option<&[f32]>) -> Result<Todo> {
+    pub fn insert_todo(
+        &self,
+        topic_id: i64,
+        text: &str,
+        url: Option<&str>,
+        embedding: Option<&[f32]>,
+    ) -> Result<Todo> {
         let blob = embedding.map(encode_embedding);
         let now = Utc::now();
         self.conn.execute(
@@ -151,7 +186,17 @@ impl Database {
             params![topic_id, text, url, blob, now.to_rfc3339()],
         )?;
         let id = self.conn.last_insert_rowid();
-        Ok(Todo { id, topic_id, text: text.to_string(), done: false, url: url.map(|s| s.to_string()), due_date: None, priority: None, in_progress: false, blocked: false })
+        Ok(Todo {
+            id,
+            topic_id,
+            text: text.to_string(),
+            done: false,
+            url: url.map(|s| s.to_string()),
+            due_date: None,
+            priority: None,
+            in_progress: false,
+            blocked: false,
+        })
     }
 
     pub fn set_todo_due_date(&self, id: i64, due_date: Option<&str>) -> Result<()> {
@@ -180,30 +225,34 @@ impl Database {
 
     /// Returns all unfinished todos with a due_date in the past, with topic name.
     pub fn overdue_todos(&self) -> Result<Vec<(Todo, String)>> {
-        let today = chrono::Local::now().date_naive().format("%Y-%m-%d").to_string();
+        let today = chrono::Local::now()
+            .date_naive()
+            .format("%Y-%m-%d")
+            .to_string();
         let mut stmt = self.conn.prepare(
             "SELECT t.id, t.topic_id, t.text, t.done, t.url, t.due_date, t.priority, tp.name, t.in_progress, t.started_at, t.completed_at, t.blocked
              FROM todos t JOIN topics tp ON tp.id = t.topic_id
              WHERE t.done = 0 AND t.due_date IS NOT NULL AND t.due_date < ?1
              ORDER BY t.due_date"
         )?;
-        let rows = stmt.query_map(params![today], |row| {
-            let todo = Todo {
-                id: row.get(0)?,
-                topic_id: row.get(1)?,
-                text: row.get(2)?,
-                done: row.get(3)?,
-                url: row.get(4)?,
-                due_date: row.get(5)?,
-                priority: row.get::<_, Option<i64>>(6)?.map(|p| p as u8),
-                in_progress: row.get(8)?,
-                blocked: row.get(11)?,
-            };
-            let topic_name: String = row.get(7)?;
-            Ok((todo, topic_name))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .context("Failed to query overdue todos")?;
+        let rows = stmt
+            .query_map(params![today], |row| {
+                let todo = Todo {
+                    id: row.get(0)?,
+                    topic_id: row.get(1)?,
+                    text: row.get(2)?,
+                    done: row.get(3)?,
+                    url: row.get(4)?,
+                    due_date: row.get(5)?,
+                    priority: row.get::<_, Option<i64>>(6)?.map(|p| p as u8),
+                    in_progress: row.get(8)?,
+                    blocked: row.get(11)?,
+                };
+                let topic_name: String = row.get(7)?;
+                Ok((todo, topic_name))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("Failed to query overdue todos")?;
         Ok(rows)
     }
 
@@ -215,13 +264,18 @@ impl Database {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         let now = Utc::now().to_rfc3339();
-        let (new_done, new_in_progress, new_blocked, started_at, completed_at): (bool, bool, bool, Option<String>, Option<String>) =
-            match (done, in_progress, blocked) {
-                (false, false, false) => (false, true,  false, Some(now), None),        // todo → in_progress
-                (false, true,  _)     => (false, false, true,  None,      None),        // in_progress → blocked
-                (false, false, true)  => (true,  false, false, None,      Some(now)),   // blocked → done
-                _                    => (false, false, false, None,      None),         // done → todo
-            };
+        let (new_done, new_in_progress, new_blocked, started_at, completed_at): (
+            bool,
+            bool,
+            bool,
+            Option<String>,
+            Option<String>,
+        ) = match (done, in_progress, blocked) {
+            (false, false, false) => (false, true, false, Some(now), None), // todo → in_progress
+            (false, true, _) => (false, false, true, None, None),           // in_progress → blocked
+            (false, false, true) => (true, false, false, None, Some(now)),  // blocked → done
+            _ => (false, false, false, None, None),                         // done → todo
+        };
         self.conn.execute(
             "UPDATE todos SET done = ?1, in_progress = ?2, blocked = ?3, started_at = COALESCE(?4, started_at), completed_at = ?5 WHERE id = ?6",
             params![new_done, new_in_progress, new_blocked, started_at, completed_at, id],
@@ -240,42 +294,68 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT id, topic_id, text, done, url, due_date, priority, in_progress, blocked FROM todos ORDER BY topic_id, created_at"
         )?;
-        let todos = stmt.query_map([], |row| {
-            Ok(Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: row.get(4)?, due_date: row.get(5)?, priority: row.get(6)?, in_progress: row.get(7)?, blocked: row.get(8)? })
-        })?.collect::<rusqlite::Result<Vec<_>>>().context("Failed to list all todos")?;
+        let todos = stmt
+            .query_map([], |row| {
+                Ok(Todo {
+                    id: row.get(0)?,
+                    topic_id: row.get(1)?,
+                    text: row.get(2)?,
+                    done: row.get(3)?,
+                    url: row.get(4)?,
+                    due_date: row.get(5)?,
+                    priority: row.get(6)?,
+                    in_progress: row.get(7)?,
+                    blocked: row.get(8)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("Failed to list all todos")?;
         Ok(todos)
     }
 
     /// Returns (total_count, done_count) across all todos.
     pub fn all_todos_count(&self) -> Result<(i64, i64)> {
-        Ok(self.conn.query_row(
-            "SELECT COUNT(*), SUM(done) FROM todos",
-            [],
-            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?.unwrap_or(0))),
-        )?)
+        Ok(self
+            .conn
+            .query_row("SELECT COUNT(*), SUM(done) FROM todos", [], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                ))
+            })?)
     }
 
     /// Returns (in_progress_count, completed_count) in one query.
     pub fn virtual_topic_counts(&self) -> Result<(i64, i64)> {
-        Ok(self.conn.query_row(
-            "SELECT SUM(in_progress), SUM(done) FROM todos",
-            [],
-            |r| Ok((r.get::<_, Option<i64>>(0)?.unwrap_or(0), r.get::<_, Option<i64>>(1)?.unwrap_or(0))),
-        )?)
+        Ok(self
+            .conn
+            .query_row("SELECT SUM(in_progress), SUM(done) FROM todos", [], |r| {
+                Ok((
+                    r.get::<_, Option<i64>>(0)?.unwrap_or(0),
+                    r.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                ))
+            })?)
     }
 
     /// Returns (created_at, started_at, completed_at) for a todo.
-    pub fn get_todo_timestamps(&self, id: i64) -> Result<(Option<String>, Option<String>, Option<String>)> {
-        let result = self.conn.query_row(
-            "SELECT created_at, started_at, completed_at FROM todos WHERE id = ?1",
-            params![id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        ).optional()?;
+    pub fn get_todo_timestamps(
+        &self,
+        id: i64,
+    ) -> Result<(Option<String>, Option<String>, Option<String>)> {
+        let result = self
+            .conn
+            .query_row(
+                "SELECT created_at, started_at, completed_at FROM todos WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
         Ok(result.unwrap_or((None, None, None)))
     }
 
     pub fn delete_todo(&self, id: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM todos WHERE id = ?1", params![id])?;
+        self.conn
+            .execute("DELETE FROM todos WHERE id = ?1", params![id])?;
         Ok(())
     }
 
@@ -283,9 +363,22 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT id, topic_id, text, done, url, due_date, priority, in_progress, blocked FROM todos WHERE in_progress = 1 ORDER BY started_at"
         )?;
-        let todos = stmt.query_map([], |row| {
-            Ok(Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: row.get(4)?, due_date: row.get(5)?, priority: row.get(6)?, in_progress: row.get(7)?, blocked: row.get(8)? })
-        })?.collect::<rusqlite::Result<Vec<_>>>().context("Failed to list in-progress todos")?;
+        let todos = stmt
+            .query_map([], |row| {
+                Ok(Todo {
+                    id: row.get(0)?,
+                    topic_id: row.get(1)?,
+                    text: row.get(2)?,
+                    done: row.get(3)?,
+                    url: row.get(4)?,
+                    due_date: row.get(5)?,
+                    priority: row.get(6)?,
+                    in_progress: row.get(7)?,
+                    blocked: row.get(8)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("Failed to list in-progress todos")?;
         Ok(todos)
     }
 
@@ -293,9 +386,22 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT id, topic_id, text, done, url, due_date, priority, in_progress, blocked FROM todos WHERE done = 1 ORDER BY completed_at DESC"
         )?;
-        let todos = stmt.query_map([], |row| {
-            Ok(Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: row.get(4)?, due_date: row.get(5)?, priority: row.get(6)?, in_progress: row.get(7)?, blocked: row.get(8)? })
-        })?.collect::<rusqlite::Result<Vec<_>>>().context("Failed to list completed todos")?;
+        let todos = stmt
+            .query_map([], |row| {
+                Ok(Todo {
+                    id: row.get(0)?,
+                    topic_id: row.get(1)?,
+                    text: row.get(2)?,
+                    done: row.get(3)?,
+                    url: row.get(4)?,
+                    due_date: row.get(5)?,
+                    priority: row.get(6)?,
+                    in_progress: row.get(7)?,
+                    blocked: row.get(8)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("Failed to list completed todos")?;
         Ok(todos)
     }
 
@@ -303,21 +409,36 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT id, topic_id, text, done, url, due_date, priority, in_progress, blocked FROM todos WHERE topic_id = ?1 ORDER BY created_at"
         )?;
-        let todos = stmt.query_map(params![topic_id], |row| {
-            Ok(Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: row.get(4)?, due_date: row.get(5)?, priority: row.get(6)?, in_progress: row.get(7)?, blocked: row.get(8)? })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .context("Failed to list todos")?;
+        let todos = stmt
+            .query_map(params![topic_id], |row| {
+                Ok(Todo {
+                    id: row.get(0)?,
+                    topic_id: row.get(1)?,
+                    text: row.get(2)?,
+                    done: row.get(3)?,
+                    url: row.get(4)?,
+                    due_date: row.get(5)?,
+                    priority: row.get(6)?,
+                    in_progress: row.get(7)?,
+                    blocked: row.get(8)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("Failed to list todos")?;
         Ok(todos)
     }
 
     pub fn topic_counts(&self) -> Result<std::collections::HashMap<i64, (i64, i64)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT topic_id, COUNT(*), SUM(done) FROM todos GROUP BY topic_id"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT topic_id, COUNT(*), SUM(done) FROM todos GROUP BY topic_id")?;
         let mut map = std::collections::HashMap::new();
         let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
         })?;
         for row in rows {
             let (topic_id, total, done) = row?;
@@ -327,21 +448,40 @@ impl Database {
     }
 
     pub fn stats(&self) -> Result<(usize, usize, usize)> {
-        let topics: usize = self.conn.query_row("SELECT COUNT(*) FROM topics", [], |r| r.get(0))?;
-        let todos: usize = self.conn.query_row("SELECT COUNT(*) FROM todos", [], |r| r.get(0))?;
-        let indexed: usize = self.conn.query_row("SELECT COUNT(*) FROM todos WHERE embedding IS NOT NULL", [], |r| r.get(0))?;
+        let topics: usize = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM topics", [], |r| r.get(0))?;
+        let todos: usize = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM todos", [], |r| r.get(0))?;
+        let indexed: usize = self.conn.query_row(
+            "SELECT COUNT(*) FROM todos WHERE embedding IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )?;
         Ok((topics, todos, indexed))
     }
 
     pub fn all_todos(&self) -> Result<Vec<Todo>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, topic_id, text, done, url, due_date FROM todos ORDER BY id"
-        )?;
-        let todos = stmt.query_map([], |row| {
-            Ok(Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: row.get(4)?, due_date: row.get(5)?, priority: None, in_progress: false, blocked: false })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .context("Failed to list all todos")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, topic_id, text, done, url, due_date FROM todos ORDER BY id")?;
+        let todos = stmt
+            .query_map([], |row| {
+                Ok(Todo {
+                    id: row.get(0)?,
+                    topic_id: row.get(1)?,
+                    text: row.get(2)?,
+                    done: row.get(3)?,
+                    url: row.get(4)?,
+                    due_date: row.get(5)?,
+                    priority: None,
+                    in_progress: false,
+                    blocked: false,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("Failed to list all todos")?;
         Ok(todos)
     }
 
@@ -349,38 +489,61 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT id, text, url, created_at FROM comments WHERE todo_id = ?1 ORDER BY created_at DESC"
         )?;
-        let comments = stmt.query_map(params![todo_id], |row| {
-            Ok(crate::models::Comment { id: row.get(0)?, text: row.get(1)?, url: row.get(2)?, created_at: row.get(3)? })
-        })?.collect::<rusqlite::Result<Vec<_>>>().context("Failed to load comments")?;
+        let comments = stmt
+            .query_map(params![todo_id], |row| {
+                Ok(crate::models::Comment {
+                    id: row.get(0)?,
+                    text: row.get(1)?,
+                    url: row.get(2)?,
+                    created_at: row.get(3)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("Failed to load comments")?;
         Ok(comments)
     }
 
-    pub fn insert_comment(&self, todo_id: i64, text: &str, url: Option<&str>) -> Result<crate::models::Comment> {
+    pub fn insert_comment(
+        &self,
+        todo_id: i64,
+        text: &str,
+        url: Option<&str>,
+    ) -> Result<crate::models::Comment> {
         let now = Utc::now().to_rfc3339();
         self.conn.execute(
             "INSERT INTO comments (todo_id, text, url, created_at) VALUES (?1, ?2, ?3, ?4)",
             params![todo_id, text, url, now],
         )?;
         let id = self.conn.last_insert_rowid();
-        Ok(crate::models::Comment { id, text: text.to_string(), url: url.map(|s| s.to_string()), created_at: now })
+        Ok(crate::models::Comment {
+            id,
+            text: text.to_string(),
+            url: url.map(|s| s.to_string()),
+            created_at: now,
+        })
     }
 
     pub fn update_comment(&self, id: i64, text: &str, url: Option<&str>) -> Result<()> {
-        self.conn.execute("UPDATE comments SET text = ?1, url = ?2 WHERE id = ?3", params![text, url, id])?;
+        self.conn.execute(
+            "UPDATE comments SET text = ?1, url = ?2 WHERE id = ?3",
+            params![text, url, id],
+        )?;
         Ok(())
     }
 
     pub fn delete_comment(&self, id: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM comments WHERE id = ?1", params![id])?;
+        self.conn
+            .execute("DELETE FROM comments WHERE id = ?1", params![id])?;
         Ok(())
     }
 
     /// Returns all comment texts for a todo, ordered newest first.
     pub fn all_comment_texts_by_todo(&self, todo_id: i64) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT text FROM comments WHERE todo_id = ?1 ORDER BY created_at DESC"
-        )?;
-        let texts = stmt.query_map(params![todo_id], |row| row.get(0))?
+        let mut stmt = self
+            .conn
+            .prepare("SELECT text FROM comments WHERE todo_id = ?1 ORDER BY created_at DESC")?;
+        let texts = stmt
+            .query_map(params![todo_id], |row| row.get(0))?
             .collect::<rusqlite::Result<Vec<String>>>()
             .context("Failed to load comment texts")?;
         Ok(texts)
@@ -395,20 +558,22 @@ impl Database {
              WHERE c.text LIKE ?1
              ORDER BY t.id"
         )?;
-        let todos = stmt.query_map(params![pattern], |row| {
-            Ok(Todo {
-                id: row.get(0)?,
-                topic_id: row.get(1)?,
-                text: row.get(2)?,
-                done: row.get(3)?,
-                url: row.get(4)?,
-                due_date: row.get(5)?,
-                priority: row.get(6)?,
-                in_progress: row.get(7)?,
-                blocked: row.get(8)?,
-            })
-        })?.collect::<rusqlite::Result<Vec<_>>>()
-        .context("Failed to search comments")?;
+        let todos = stmt
+            .query_map(params![pattern], |row| {
+                Ok(Todo {
+                    id: row.get(0)?,
+                    topic_id: row.get(1)?,
+                    text: row.get(2)?,
+                    done: row.get(3)?,
+                    url: row.get(4)?,
+                    due_date: row.get(5)?,
+                    priority: row.get(6)?,
+                    in_progress: row.get(7)?,
+                    blocked: row.get(8)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("Failed to search comments")?;
         Ok(todos)
     }
 
@@ -427,9 +592,22 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT id, topic_id, text, done, url, due_date, priority, in_progress, blocked FROM todos WHERE done = 0 AND due_date IS NOT NULL AND due_date <= ?1 ORDER BY due_date"
         )?;
-        let todos = stmt.query_map(params![end], |row| {
-            Ok(Todo { id: row.get(0)?, topic_id: row.get(1)?, text: row.get(2)?, done: row.get(3)?, url: row.get(4)?, due_date: row.get(5)?, priority: row.get(6)?, in_progress: row.get(7)?, blocked: row.get(8)? })
-        })?.collect::<rusqlite::Result<Vec<_>>>().context("Failed to list due-this-week todos")?;
+        let todos = stmt
+            .query_map(params![end], |row| {
+                Ok(Todo {
+                    id: row.get(0)?,
+                    topic_id: row.get(1)?,
+                    text: row.get(2)?,
+                    done: row.get(3)?,
+                    url: row.get(4)?,
+                    due_date: row.get(5)?,
+                    priority: row.get(6)?,
+                    in_progress: row.get(7)?,
+                    blocked: row.get(8)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("Failed to list due-this-week todos")?;
         Ok(todos)
     }
 
@@ -446,11 +624,23 @@ impl Database {
     /// Swap the sort_order of two topics (used for reordering).
     pub fn swap_topic_sort_order(&self, id1: i64, id2: i64) -> Result<()> {
         let s1: i64 = self.conn.query_row(
-            "SELECT sort_order FROM topics WHERE id = ?1", params![id1], |r| r.get(0))?;
+            "SELECT sort_order FROM topics WHERE id = ?1",
+            params![id1],
+            |r| r.get(0),
+        )?;
         let s2: i64 = self.conn.query_row(
-            "SELECT sort_order FROM topics WHERE id = ?1", params![id2], |r| r.get(0))?;
-        self.conn.execute("UPDATE topics SET sort_order = ?1 WHERE id = ?2", params![s2, id1])?;
-        self.conn.execute("UPDATE topics SET sort_order = ?1 WHERE id = ?2", params![s1, id2])?;
+            "SELECT sort_order FROM topics WHERE id = ?1",
+            params![id2],
+            |r| r.get(0),
+        )?;
+        self.conn.execute(
+            "UPDATE topics SET sort_order = ?1 WHERE id = ?2",
+            params![s2, id1],
+        )?;
+        self.conn.execute(
+            "UPDATE topics SET sort_order = ?1 WHERE id = ?2",
+            params![s1, id2],
+        )?;
         Ok(())
     }
 
@@ -465,6 +655,7 @@ impl Database {
 
     /// Returns all undone todos with their topic name and stored embedding.
     /// Used for the daily briefing without requiring the live embedder.
+    #[allow(clippy::type_complexity)]
     pub fn all_undone_todos_with_topics(&self) -> Result<Vec<(Todo, String, Option<Vec<f32>>)>> {
         let mut stmt = self.conn.prepare(
             "SELECT t.id, t.topic_id, t.text, t.done, t.url, t.due_date, t.priority, t.in_progress, t.blocked, tp.name, t.embedding
@@ -472,25 +663,26 @@ impl Database {
              WHERE t.done = 0
              ORDER BY t.created_at"
         )?;
-        let rows = stmt.query_map([], |row| {
-            let todo = Todo {
-                id: row.get(0)?,
-                topic_id: row.get(1)?,
-                text: row.get(2)?,
-                done: row.get(3)?,
-                url: row.get(4)?,
-                due_date: row.get(5)?,
-                priority: row.get::<_, Option<i64>>(6)?.map(|p| p as u8),
-                in_progress: row.get(7)?,
-                blocked: row.get(8)?,
-            };
-            let topic_name: String = row.get(9)?;
-            let blob: Option<Vec<u8>> = row.get(10)?;
-            let embedding = blob.map(|b| decode_embedding(&b));
-            Ok((todo, topic_name, embedding))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .context("Failed to load todos for briefing")?;
+        let rows = stmt
+            .query_map([], |row| {
+                let todo = Todo {
+                    id: row.get(0)?,
+                    topic_id: row.get(1)?,
+                    text: row.get(2)?,
+                    done: row.get(3)?,
+                    url: row.get(4)?,
+                    due_date: row.get(5)?,
+                    priority: row.get::<_, Option<i64>>(6)?.map(|p| p as u8),
+                    in_progress: row.get(7)?,
+                    blocked: row.get(8)?,
+                };
+                let topic_name: String = row.get(9)?;
+                let blob: Option<Vec<u8>> = row.get(10)?;
+                let embedding = blob.map(|b| decode_embedding(&b));
+                Ok((todo, topic_name, embedding))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("Failed to load todos for briefing")?;
         Ok(rows)
     }
 
@@ -498,24 +690,25 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT id, topic_id, text, done, embedding, url, due_date, priority, in_progress, blocked FROM todos WHERE embedding IS NOT NULL ORDER BY id"
         )?;
-        let todos = stmt.query_map([], |row| {
-            let blob: Vec<u8> = row.get(4)?;
-            let todo = Todo {
-                id: row.get(0)?,
-                topic_id: row.get(1)?,
-                text: row.get(2)?,
-                done: row.get(3)?,
-                url: row.get(5)?,
-                due_date: row.get(6)?,
-                priority: row.get(7)?,
-                in_progress: row.get(8)?,
-                blocked: row.get(9)?,
-            };
-            let emb = decode_embedding(&blob);
-            Ok((todo, emb))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .context("Failed to load todos for search")?;
+        let todos = stmt
+            .query_map([], |row| {
+                let blob: Vec<u8> = row.get(4)?;
+                let todo = Todo {
+                    id: row.get(0)?,
+                    topic_id: row.get(1)?,
+                    text: row.get(2)?,
+                    done: row.get(3)?,
+                    url: row.get(5)?,
+                    due_date: row.get(6)?,
+                    priority: row.get(7)?,
+                    in_progress: row.get(8)?,
+                    blocked: row.get(9)?,
+                };
+                let emb = decode_embedding(&blob);
+                Ok((todo, emb))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("Failed to load todos for search")?;
         Ok(todos)
     }
 }
@@ -540,18 +733,40 @@ fn detect_legacy_version(conn: &Connection) -> Result<u32> {
         )?)
     };
 
-    if !table_exists("todos")? { return Ok(0); }
+    if !table_exists("todos")? {
+        return Ok(0);
+    }
     // Migrations are numbered 1-based (user_version = number of applied migrations).
-    if has_col("todos", "blocked")? { return Ok(11); }
-    if has_col("topics", "sort_order")? { return Ok(10); }
-    if has_col("comments", "url")? { return Ok(9); }
-    if table_exists("comments")? { return Ok(8); }
-    if has_col("todos", "completed_at")? { return Ok(7); }
-    if has_col("todos", "started_at")? { return Ok(6); }
-    if has_col("todos", "in_progress")? { return Ok(5); }
-    if has_col("todos", "priority")? { return Ok(4); }
-    if has_col("todos", "due_date")? { return Ok(3); }
-    if has_col("todos", "url")? { return Ok(2); }
+    if has_col("todos", "blocked")? {
+        return Ok(11);
+    }
+    if has_col("topics", "sort_order")? {
+        return Ok(10);
+    }
+    if has_col("comments", "url")? {
+        return Ok(9);
+    }
+    if table_exists("comments")? {
+        return Ok(8);
+    }
+    if has_col("todos", "completed_at")? {
+        return Ok(7);
+    }
+    if has_col("todos", "started_at")? {
+        return Ok(6);
+    }
+    if has_col("todos", "in_progress")? {
+        return Ok(5);
+    }
+    if has_col("todos", "priority")? {
+        return Ok(4);
+    }
+    if has_col("todos", "due_date")? {
+        return Ok(3);
+    }
+    if has_col("todos", "url")? {
+        return Ok(2);
+    }
     Ok(1)
 }
 
@@ -576,5 +791,9 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
     let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
     let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if na == 0.0 || nb == 0.0 { 0.0 } else { dot / (na * nb) }
+    if na == 0.0 || nb == 0.0 {
+        0.0
+    } else {
+        dot / (na * nb)
+    }
 }

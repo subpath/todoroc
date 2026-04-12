@@ -26,7 +26,7 @@ pub enum TodoSort {
 }
 
 impl TodoSort {
-    pub fn apply(self, todos: &mut Vec<crate::models::Todo>) {
+    pub fn apply(self, todos: &mut [crate::models::Todo]) {
         match self {
             // Flat: keep DB inserted order — nothing to do (stable).
             TodoSort::Flat => {}
@@ -37,18 +37,25 @@ impl TodoSort {
             //   sub-group 2 — neither        → stable (DB added-date order)
             TodoSort::Bucketed => {
                 let group = |t: &crate::models::Todo| -> u8 {
-                    if t.priority.is_some() { 0 }
-                    else if t.due_date.is_some() { 1 }
-                    else { 2 }
+                    if t.priority.is_some() {
+                        0
+                    } else if t.due_date.is_some() {
+                        1
+                    } else {
+                        2
+                    }
                 };
                 todos.sort_by(|a, b| {
-                    a.done.cmp(&b.done)
+                    a.done
+                        .cmp(&b.done)
                         .then_with(|| group(a).cmp(&group(b)))
                         .then_with(|| match (group(a), group(b)) {
-                            (0, 0) => a.priority.cmp(&b.priority)
-                                        .then_with(|| a.due_date.cmp(&b.due_date)),
+                            (0, 0) => a
+                                .priority
+                                .cmp(&b.priority)
+                                .then_with(|| a.due_date.cmp(&b.due_date)),
                             (1, 1) => a.due_date.cmp(&b.due_date),
-                            _      => std::cmp::Ordering::Equal,
+                            _ => std::cmp::Ordering::Equal,
                         })
                 });
             }
@@ -74,17 +81,29 @@ impl DetailField {
             Self::Due => Self::Url,
             Self::Url => Self::NewComment,
             Self::NewComment => {
-                if comment_count > 0 { Self::ExistingComment(0) } else { Self::Text }
+                if comment_count > 0 {
+                    Self::ExistingComment(0)
+                } else {
+                    Self::Text
+                }
             }
             Self::ExistingComment(i) => {
-                if i + 1 < comment_count { Self::ExistingComment(i + 1) } else { Self::Text }
+                if i + 1 < comment_count {
+                    Self::ExistingComment(i + 1)
+                } else {
+                    Self::Text
+                }
             }
         }
     }
     pub fn prev(&self, comment_count: usize) -> Self {
         match self {
             Self::Text => {
-                if comment_count > 0 { Self::ExistingComment(comment_count - 1) } else { Self::NewComment }
+                if comment_count > 0 {
+                    Self::ExistingComment(comment_count - 1)
+                } else {
+                    Self::NewComment
+                }
             }
             Self::Priority => Self::Text,
             Self::Due => Self::Priority,
@@ -193,10 +212,22 @@ pub struct App {
 impl App {
     pub fn new(db: Database, embedder: Option<Embedder>, info: AppInfo) -> Result<Self> {
         let mut topics = vec![
-            Topic { id: -1, name: "🔄 In Progress".to_string() },
-            Topic { id: -2, name: "✅ Completed".to_string() },
-            Topic { id: -3, name: "📅 Due This Week".to_string() },
-            Topic { id: -4, name: "📋 All Tasks".to_string() },
+            Topic {
+                id: -1,
+                name: "🔄 In Progress".to_string(),
+            },
+            Topic {
+                id: -2,
+                name: "✅ Completed".to_string(),
+            },
+            Topic {
+                id: -3,
+                name: "📅 Due This Week".to_string(),
+            },
+            Topic {
+                id: -4,
+                name: "📋 All Tasks".to_string(),
+            },
         ];
         topics.extend(db.list_topics()?);
         let mut topic_counts = db.topic_counts()?;
@@ -259,7 +290,10 @@ impl App {
     }
 
     pub fn is_virtual_topic(&self) -> bool {
-        matches!(self.selected_topic_id(), Some(-1) | Some(-2) | Some(-3) | Some(-4))
+        matches!(
+            self.selected_topic_id(),
+            Some(-1) | Some(-2) | Some(-3) | Some(-4)
+        )
     }
 
     pub fn toggle_virtual_topics(&mut self) -> Result<()> {
@@ -300,10 +334,22 @@ impl App {
     fn reload_topics_list(&mut self) -> Result<()> {
         let mut topics: Vec<Topic> = if self.show_virtual_topics {
             vec![
-                Topic { id: -1, name: "🔄 In Progress".to_string() },
-                Topic { id: -2, name: "✅ Completed".to_string() },
-                Topic { id: -3, name: "📅 Due This Week".to_string() },
-                Topic { id: -4, name: "📋 All Tasks".to_string() },
+                Topic {
+                    id: -1,
+                    name: "🔄 In Progress".to_string(),
+                },
+                Topic {
+                    id: -2,
+                    name: "✅ Completed".to_string(),
+                },
+                Topic {
+                    id: -3,
+                    name: "📅 Due This Week".to_string(),
+                },
+                Topic {
+                    id: -4,
+                    name: "📋 All Tasks".to_string(),
+                },
             ]
         } else {
             vec![]
@@ -338,7 +384,7 @@ impl App {
             Some(-3) => self.db.todos_due_this_week()?,
             Some(-4) => self.db.todos_all()?,
             Some(id) => self.db.todos_for_topic(id)?,
-            None     => vec![],
+            None => vec![],
         };
         self.todo_sort.clone().apply(&mut self.todos);
 
@@ -390,7 +436,6 @@ impl App {
         Ok(())
     }
 
-
     pub fn update_topic(&mut self, name: &str) -> Result<()> {
         if let Some(topic) = self.topics.get(self.selected_topic) {
             let id = topic.id;
@@ -409,7 +454,13 @@ impl App {
             let comments = self.db.all_comment_texts_by_todo(id)?;
             let embed_text = build_embed_text(&clean, &comments);
             let embedding = self.embed_with_status(&embed_text);
-            self.db.update_todo_text_and_done(id, &clean, done, url.as_deref(), embedding.as_deref())?;
+            self.db.update_todo_text_and_done(
+                id,
+                &clean,
+                done,
+                url.as_deref(),
+                embedding.as_deref(),
+            )?;
             if priority.is_some() {
                 self.db.set_todo_priority(id, priority)?;
             }
@@ -439,7 +490,9 @@ impl App {
             let (clean, priority) = extract_priority(text);
             let url = extract_url(&clean);
             let embedding = self.embed_with_status(&clean);
-            let mut todo = self.db.insert_todo(topic_id, &clean, url.as_deref(), embedding.as_deref())?;
+            let mut todo =
+                self.db
+                    .insert_todo(topic_id, &clean, url.as_deref(), embedding.as_deref())?;
             if priority.is_some() {
                 self.db.set_todo_priority(todo.id, priority)?;
                 todo.priority = priority;
@@ -453,10 +506,10 @@ impl App {
     pub fn cycle_priority(&mut self) -> Result<()> {
         if let Some(todo) = self.todos.get(self.selected_todo) {
             let next = match todo.priority {
-                None     => Some(1),
-                Some(1)  => Some(2),
-                Some(2)  => Some(3),
-                _        => None,
+                None => Some(1),
+                Some(1) => Some(2),
+                Some(2) => Some(3),
+                _ => None,
             };
             let id = todo.id;
             self.db.set_todo_priority(id, next)?;
@@ -488,15 +541,24 @@ impl App {
     }
 
     pub fn open_detail(&mut self) {
-        let Some(todo) = self.todos.get(self.selected_todo) else { return };
+        let Some(todo) = self.todos.get(self.selected_todo) else {
+            return;
+        };
         let text = todo.text.clone();
         let todo_id = todo.id;
         let priority = todo.priority;
         let due = todo.due_date.clone().unwrap_or_default();
-        let due_cursor = todo.due_date.as_deref().map(|s| s.chars().count()).unwrap_or(0);
+        let due_cursor = todo
+            .due_date
+            .as_deref()
+            .map(|s| s.chars().count())
+            .unwrap_or(0);
         let url = todo.url.clone().unwrap_or_default();
         let url_cursor = todo.url.as_deref().map(|s| s.chars().count()).unwrap_or(0);
-        let (created_at, started_at, completed_at) = self.db.get_todo_timestamps(todo_id).unwrap_or((None, None, None));
+        let (created_at, started_at, completed_at) = self
+            .db
+            .get_todo_timestamps(todo_id)
+            .unwrap_or((None, None, None));
         let comments = self.db.get_comments_for_todo(todo_id).unwrap_or_default();
         self.detail = Some(DetailState {
             todo_id,
@@ -522,10 +584,23 @@ impl App {
 
     pub fn confirm_detail(&mut self) -> Result<()> {
         let (id, due_str, text, priority, url, comment_texts) = {
-            let Some(d) = &self.detail else { return Ok(()); };
-            let url = if d.url.is_empty() { None } else { Some(d.url.clone()) };
+            let Some(d) = &self.detail else {
+                return Ok(());
+            };
+            let url = if d.url.is_empty() {
+                None
+            } else {
+                Some(d.url.clone())
+            };
             let comment_texts: Vec<String> = d.comments.iter().map(|c| c.text.clone()).collect();
-            (d.todo_id, d.due.clone(), d.text.clone(), d.priority, url, comment_texts)
+            (
+                d.todo_id,
+                d.due.clone(),
+                d.text.clone(),
+                d.priority,
+                url,
+                comment_texts,
+            )
         };
 
         let due_date = if due_str.is_empty() {
@@ -535,13 +610,22 @@ impl App {
         };
         let due_date = match due_date {
             Ok(v) => v,
-            Err(msg) => { self.status_message = Some(msg); return Ok(()); }
+            Err(msg) => {
+                self.status_message = Some(msg);
+                return Ok(());
+            }
         };
 
         let embed_text = build_embed_text(&text, &comment_texts);
         let embedding = self.embed_with_status(&embed_text);
         if let Some(todo) = self.todos.iter().find(|t| t.id == id) {
-            self.db.update_todo_text_and_done(id, &text, todo.done, url.as_deref(), embedding.as_deref())?;
+            self.db.update_todo_text_and_done(
+                id,
+                &text,
+                todo.done,
+                url.as_deref(),
+                embedding.as_deref(),
+            )?;
         }
         self.db.set_todo_priority(id, priority)?;
         self.db.set_todo_due_date(id, due_date.as_deref())?;
@@ -558,13 +642,19 @@ impl App {
     /// Bump the selected todo's due date by `days` (positive = forward, negative = back).
     /// If no due date is set, `+` uses today as the base; `-` does nothing.
     pub fn snooze_due_date(&mut self, days: i64) -> Result<()> {
-        let Some(todo) = self.todos.get(self.selected_todo) else { return Ok(()); };
-        let base = match todo.due_date.as_deref()
+        let Some(todo) = self.todos.get(self.selected_todo) else {
+            return Ok(());
+        };
+        let base = match todo
+            .due_date
+            .as_deref()
             .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
         {
             Some(d) => d,
             None => {
-                if days < 0 { return Ok(()); }
+                if days < 0 {
+                    return Ok(());
+                }
                 chrono::Local::now().date_naive()
             }
         };
@@ -579,10 +669,16 @@ impl App {
     }
 
     pub fn move_topic_up(&mut self) -> Result<()> {
-        let Some(topic) = self.topics.get(self.selected_topic) else { return Ok(()); };
-        if topic.id <= 0 { return Ok(()); }
+        let Some(topic) = self.topics.get(self.selected_topic) else {
+            return Ok(());
+        };
+        if topic.id <= 0 {
+            return Ok(());
+        }
         let curr_id = topic.id;
-        let prev_idx = self.topics[..self.selected_topic].iter().rposition(|t| t.id > 0);
+        let prev_idx = self.topics[..self.selected_topic]
+            .iter()
+            .rposition(|t| t.id > 0);
         if let Some(prev_idx) = prev_idx {
             let prev_id = self.topics[prev_idx].id;
             self.db.swap_topic_sort_order(curr_id, prev_id)?;
@@ -596,8 +692,12 @@ impl App {
     }
 
     pub fn move_topic_down(&mut self) -> Result<()> {
-        let Some(topic) = self.topics.get(self.selected_topic) else { return Ok(()); };
-        if topic.id <= 0 { return Ok(()); }
+        let Some(topic) = self.topics.get(self.selected_topic) else {
+            return Ok(());
+        };
+        if topic.id <= 0 {
+            return Ok(());
+        }
         let curr_id = topic.id;
         let next_idx = self.topics[self.selected_topic + 1..]
             .iter()
@@ -616,8 +716,12 @@ impl App {
     }
 
     pub fn open_due_popup(&mut self) {
-        if self.todos.is_empty() { return; }
-        let current = self.todos.get(self.selected_todo)
+        if self.todos.is_empty() {
+            return;
+        }
+        let current = self
+            .todos
+            .get(self.selected_todo)
             .and_then(|t| t.due_date.clone())
             .unwrap_or_default();
         self.due_input = current.clone();
@@ -626,7 +730,9 @@ impl App {
     }
 
     pub fn confirm_due_date(&mut self) -> Result<()> {
-        let Some(todo) = self.todos.get(self.selected_todo) else { return Ok(()); };
+        let Some(todo) = self.todos.get(self.selected_todo) else {
+            return Ok(());
+        };
         let id = todo.id;
         match due_date::parse(&self.due_input) {
             Ok(date) => {
@@ -673,12 +779,24 @@ impl App {
             .collect();
 
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        let mut undone: Vec<_> = scored.iter().filter(|(t, _)| !t.done).take(7).cloned().collect();
-        let done: Vec<_>       = scored.iter().filter(|(t, _)|  t.done).take(5).cloned().collect();
+        let mut undone: Vec<_> = scored
+            .iter()
+            .filter(|(t, _)| !t.done)
+            .take(7)
+            .cloned()
+            .collect();
+        let done: Vec<_> = scored
+            .iter()
+            .filter(|(t, _)| t.done)
+            .take(5)
+            .cloned()
+            .collect();
         undone.extend(done);
 
         // Secondary pass: surface todos whose comments contain the raw query text.
-        let comment_hits = self.db.todos_with_comment_matching(&self.search_query.clone())?;
+        let comment_hits = self
+            .db
+            .todos_with_comment_matching(&self.search_query.clone())?;
         let seen_ids: std::collections::HashSet<i64> = undone.iter().map(|(t, _)| t.id).collect();
         for todo in comment_hits {
             if !seen_ids.contains(&todo.id) {
@@ -718,7 +836,9 @@ impl App {
                 self.selected_topic = 0;
                 let _ = self.reload_todos();
             }
-            Focus::Todos => { self.selected_todo = 0; }
+            Focus::Todos => {
+                self.selected_todo = 0;
+            }
         }
     }
 
@@ -728,7 +848,9 @@ impl App {
                 self.selected_topic = self.topics.len().saturating_sub(1);
                 let _ = self.reload_todos();
             }
-            Focus::Todos => { self.selected_todo = self.todos.len().saturating_sub(1); }
+            Focus::Todos => {
+                self.selected_todo = self.todos.len().saturating_sub(1);
+            }
         }
     }
 
@@ -768,15 +890,25 @@ impl App {
     pub fn delete_confirm_label(&self) -> String {
         match self.confirm_delete {
             Some(Focus::Topics) => {
-                let name = self.topics.get(self.selected_topic)
-                    .map(|t| t.name.as_str()).unwrap_or("this topic");
+                let name = self
+                    .topics
+                    .get(self.selected_topic)
+                    .map(|t| t.name.as_str())
+                    .unwrap_or("this topic");
                 format!("Delete topic \"{}\"?", name)
             }
             Some(Focus::Todos) => {
-                let text = self.todos.get(self.selected_todo)
-                    .map(|t| t.text.as_str()).unwrap_or("this todo");
+                let text = self
+                    .todos
+                    .get(self.selected_todo)
+                    .map(|t| t.text.as_str())
+                    .unwrap_or("this todo");
                 let truncated: String = text.chars().take(40).collect();
-                let label = if truncated.len() < text.len() { format!("{}…", truncated) } else { text.to_string() };
+                let label = if truncated.len() < text.len() {
+                    format!("{}…", truncated)
+                } else {
+                    text.to_string()
+                };
                 format!("Delete \"{}\"?", label)
             }
             _ => "Delete?".into(),
@@ -784,9 +916,13 @@ impl App {
     }
 
     pub fn save_new_comment(&mut self) -> Result<()> {
-        let Some(d) = &mut self.detail else { return Ok(()); };
+        let Some(d) = &mut self.detail else {
+            return Ok(());
+        };
         let text = d.new_comment.trim().to_string();
-        if text.is_empty() { return Ok(()); }
+        if text.is_empty() {
+            return Ok(());
+        }
         let todo_id = d.todo_id;
         let todo_text = d.text.clone();
         let url = extract_url(&text);
@@ -802,8 +938,12 @@ impl App {
     }
 
     pub fn delete_selected_comment(&mut self) -> Result<()> {
-        let Some(d) = &self.detail else { return Ok(()); };
-        let DetailField::ExistingComment(i) = d.field.clone() else { return Ok(()); };
+        let Some(d) = &self.detail else {
+            return Ok(());
+        };
+        let DetailField::ExistingComment(i) = d.field.clone() else {
+            return Ok(());
+        };
         let comment_id = d.comments[i].id;
         let todo_id = d.todo_id;
         let todo_text = d.text.clone();
@@ -826,8 +966,12 @@ impl App {
     }
 
     pub fn save_comment_edit(&mut self) -> Result<()> {
-        let Some(d) = &self.detail else { return Ok(()); };
-        let DetailField::ExistingComment(i) = d.field.clone() else { return Ok(()); };
+        let Some(d) = &self.detail else {
+            return Ok(());
+        };
+        let DetailField::ExistingComment(i) = d.field.clone() else {
+            return Ok(());
+        };
         let text = d.comment_edit_text.trim().to_string();
         let comment_id = d.comments[i].id;
         let todo_id = d.todo_id;
@@ -839,9 +983,13 @@ impl App {
                 let d = self.detail.as_mut().unwrap();
                 d.comments.remove(i);
                 let new_count = d.comments.len();
-                d.field = if new_count == 0 { DetailField::NewComment }
-                          else if i < new_count { DetailField::ExistingComment(i) }
-                          else { DetailField::ExistingComment(new_count - 1) };
+                d.field = if new_count == 0 {
+                    DetailField::NewComment
+                } else if i < new_count {
+                    DetailField::ExistingComment(i)
+                } else {
+                    DetailField::ExistingComment(new_count - 1)
+                };
             }
         } else {
             let url = extract_url(&text);
@@ -868,14 +1016,17 @@ impl App {
     /// Returns real topics eligible as move targets for the selected todo (excludes the todo's current topic).
     pub fn move_popup_topics(&self) -> Vec<Topic> {
         let current_topic_id = self.todos.get(self.selected_todo).map(|t| t.topic_id);
-        self.topics.iter()
+        self.topics
+            .iter()
             .filter(|t| t.id > 0 && Some(t.id) != current_topic_id)
             .cloned()
             .collect()
     }
 
     pub fn open_move_popup(&mut self) {
-        if self.todos.is_empty() { return; }
+        if self.todos.is_empty() {
+            return;
+        }
         if self.move_popup_topics().is_empty() {
             self.status_message = Some("No other topics to move to".into());
             return;
@@ -893,8 +1044,12 @@ impl App {
             let targets = self.move_popup_topics();
             targets.get(self.move_popup_selected).map(|t| t.id)
         };
-        let Some(target_id) = target_id else { return Ok(()); };
-        let Some(todo) = self.todos.get(self.selected_todo) else { return Ok(()); };
+        let Some(target_id) = target_id else {
+            return Ok(());
+        };
+        let Some(todo) = self.todos.get(self.selected_todo) else {
+            return Ok(());
+        };
         let todo_id = todo.id;
         self.db.move_todo_to_topic(todo_id, target_id)?;
         self.move_popup = false;
@@ -908,14 +1063,22 @@ impl App {
             if let DetailField::ExistingComment(i) = &d.field {
                 d.comments.get(*i).and_then(|c| c.url.clone())
             } else {
-                if d.url.is_empty() { None } else { Some(d.url.clone()) }
+                if d.url.is_empty() {
+                    None
+                } else {
+                    Some(d.url.clone())
+                }
             }
         } else if self.search_open {
-            self.search_results.get(self.selected_search_result)
+            self.search_results
+                .get(self.selected_search_result)
                 .and_then(|(t, _)| t.url.clone())
         } else {
             match self.focus {
-                Focus::Todos => self.todos.get(self.selected_todo).and_then(|t| t.url.clone()),
+                Focus::Todos => self
+                    .todos
+                    .get(self.selected_todo)
+                    .and_then(|t| t.url.clone()),
                 Focus::Topics => None,
             }
         };
@@ -966,7 +1129,9 @@ impl App {
         let msgs: Vec<SyncMsg> = {
             if let Some(rx) = &self.sync_rx {
                 let mut v = Vec::new();
-                while let Ok(msg) = rx.try_recv() { v.push(msg); }
+                while let Ok(msg) = rx.try_recv() {
+                    v.push(msg);
+                }
                 v
             } else {
                 Vec::new()
@@ -976,7 +1141,9 @@ impl App {
         for msg in msgs {
             match msg {
                 SyncMsg::Status(s) => {
-                    if let Some(ss) = &mut self.sync_status { ss.message = s; }
+                    if let Some(ss) = &mut self.sync_status {
+                        ss.message = s;
+                    }
                 }
                 SyncMsg::Done => {
                     self.sync_rx = None;
@@ -1022,12 +1189,14 @@ impl App {
         let (blocked_data, actionable): (Vec<_>, Vec<_>) =
             todos_data.into_iter().partition(|(t, _, _)| t.blocked);
 
-        let mut must_do_data:  Vec<(Todo, String, Option<Vec<f32>>)> = Vec::new();
+        let mut must_do_data: Vec<(Todo, String, Option<Vec<f32>>)> = Vec::new();
         let mut in_flight_data: Vec<(Todo, String, Option<Vec<f32>>)> = Vec::new();
-        let mut other_data:    Vec<(Todo, String, Option<Vec<f32>>)> = Vec::new();
+        let mut other_data: Vec<(Todo, String, Option<Vec<f32>>)> = Vec::new();
 
         for (todo, topic_name, emb) in actionable {
-            let is_must = todo.due_date.as_deref()
+            let is_must = todo
+                .due_date
+                .as_deref()
                 .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
                 .map(|d| d <= today)
                 .unwrap_or(false);
@@ -1040,29 +1209,59 @@ impl App {
             }
         }
 
-        must_do_data.sort_by(|a, b| briefing_score(&b.0).partial_cmp(&briefing_score(&a.0)).unwrap_or(std::cmp::Ordering::Equal));
-        in_flight_data.sort_by(|a, b| briefing_score(&b.0).partial_cmp(&briefing_score(&a.0)).unwrap_or(std::cmp::Ordering::Equal));
-        other_data.sort_by(|a, b| briefing_score(&b.0).partial_cmp(&briefing_score(&a.0)).unwrap_or(std::cmp::Ordering::Equal));
+        must_do_data.sort_by(|a, b| {
+            briefing_score(&b.0)
+                .partial_cmp(&briefing_score(&a.0))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        in_flight_data.sort_by(|a, b| {
+            briefing_score(&b.0)
+                .partial_cmp(&briefing_score(&a.0))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        other_data.sort_by(|a, b| {
+            briefing_score(&b.0)
+                .partial_cmp(&briefing_score(&a.0))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         must_do_data.truncate(4);
         other_data.truncate(20);
 
-        let seeds: Vec<_> = must_do_data.iter().chain(in_flight_data.iter())
+        let seeds: Vec<_> = must_do_data
+            .iter()
+            .chain(in_flight_data.iter())
             .map(|(t, n, e)| (t.clone(), n.clone(), e.clone()))
             .collect();
         let recommended_data = mmr_select(&seeds, other_data, 5);
 
         let mut items: Vec<BriefingItem> = Vec::new();
         for (todo, topic_name, _) in must_do_data {
-            items.push(BriefingItem { todo, topic_name, section: BriefingSection::MustDo });
+            items.push(BriefingItem {
+                todo,
+                topic_name,
+                section: BriefingSection::MustDo,
+            });
         }
         for (todo, topic_name, _) in in_flight_data {
-            items.push(BriefingItem { todo, topic_name, section: BriefingSection::InFlight });
+            items.push(BriefingItem {
+                todo,
+                topic_name,
+                section: BriefingSection::InFlight,
+            });
         }
         for (todo, topic_name, _) in recommended_data {
-            items.push(BriefingItem { todo, topic_name, section: BriefingSection::Recommended });
+            items.push(BriefingItem {
+                todo,
+                topic_name,
+                section: BriefingSection::Recommended,
+            });
         }
         for (todo, topic_name, _) in blocked_data {
-            items.push(BriefingItem { todo, topic_name, section: BriefingSection::Waiting });
+            items.push(BriefingItem {
+                todo,
+                topic_name,
+                section: BriefingSection::Waiting,
+            });
         }
 
         self.briefing_items = items;
@@ -1076,7 +1275,10 @@ impl App {
     }
 
     pub fn briefing_toggle_todo(&mut self) -> Result<()> {
-        let id = self.briefing_items.get(self.selected_briefing).map(|i| i.todo.id);
+        let id = self
+            .briefing_items
+            .get(self.selected_briefing)
+            .map(|i| i.todo.id);
         if let Some(id) = id {
             let (new_done, new_in_progress, new_blocked) = self.db.toggle_todo(id)?;
             if let Some(item) = self.briefing_items.get_mut(self.selected_briefing) {
@@ -1094,14 +1296,21 @@ impl App {
     }
 
     pub fn briefing_snooze(&mut self, days: i64) -> Result<()> {
-        let Some(item) = self.briefing_items.get(self.selected_briefing) else { return Ok(()); };
+        let Some(item) = self.briefing_items.get(self.selected_briefing) else {
+            return Ok(());
+        };
         let id = item.todo.id;
-        let base = match item.todo.due_date.as_deref()
+        let base = match item
+            .todo
+            .due_date
+            .as_deref()
             .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
         {
             Some(d) => d,
             None => {
-                if days < 0 { return Ok(()); }
+                if days < 0 {
+                    return Ok(());
+                }
                 chrono::Local::now().date_naive()
             }
         };
@@ -1123,7 +1332,7 @@ impl App {
             return Ok(());
         };
         let topic_id = item.todo.topic_id;
-        let todo_id  = item.todo.id;
+        let todo_id = item.todo.id;
         self.briefing_open = false;
         if let Some(pos) = self.topics.iter().position(|t| t.id == topic_id) {
             self.selected_topic = pos;
@@ -1137,7 +1346,9 @@ impl App {
     }
 
     pub fn briefing_open_url(&mut self) {
-        let url = self.briefing_items.get(self.selected_briefing)
+        let url = self
+            .briefing_items
+            .get(self.selected_briefing)
             .and_then(|i| i.todo.url.as_deref().map(|s| s.to_string()));
         match url {
             Some(u) => {
@@ -1153,14 +1364,16 @@ impl App {
 /// Urgency + priority + in_progress bonus for daily briefing ranking.
 fn briefing_score(todo: &Todo) -> f32 {
     let today = chrono::Local::now().date_naive();
-    let urgency = todo.due_date.as_deref()
+    let urgency = todo
+        .due_date
+        .as_deref()
         .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
         .map(|d| {
             let diff = (d - today).num_days();
             match diff {
                 i64::MIN..=-1 => 10.0 + (-diff as f32).min(15.0),
-                0  => 10.0,
-                1  => 7.0,
+                0 => 10.0,
+                1 => 7.0,
                 2..=3 => 5.0,
                 4..=6 => 3.0,
                 7..=13 => 1.0,
@@ -1185,25 +1398,32 @@ fn mmr_select(
     mut candidates: Vec<(Todo, String, Option<Vec<f32>>)>,
     n: usize,
 ) -> Vec<(Todo, String, Option<Vec<f32>>)> {
-    let max_score = candidates.iter()
+    let max_score = candidates
+        .iter()
         .map(|(t, _, _)| briefing_score(t))
         .fold(0.0f32, f32::max)
         .max(1.0);
 
-    let mut selected_embs: Vec<Vec<f32>> = seeds.iter()
-        .filter_map(|(_, _, e)| e.clone())
-        .collect();
+    let mut selected_embs: Vec<Vec<f32>> = seeds.iter().filter_map(|(_, _, e)| e.clone()).collect();
 
     let mut result = Vec::new();
     for _ in 0..n {
-        if candidates.is_empty() { break; }
-        let best_idx = candidates.iter().enumerate()
+        if candidates.is_empty() {
+            break;
+        }
+        let best_idx = candidates
+            .iter()
+            .enumerate()
             .map(|(i, (todo, _, emb))| {
                 let score = briefing_score(todo) / max_score;
-                let max_sim = emb.as_ref()
-                    .map(|e| selected_embs.iter()
-                        .map(|se| cosine_similarity(e, se))
-                        .fold(0.0f32, f32::max))
+                let max_sim = emb
+                    .as_ref()
+                    .map(|e| {
+                        selected_embs
+                            .iter()
+                            .map(|se| cosine_similarity(e, se))
+                            .fold(0.0f32, f32::max)
+                    })
                     .unwrap_or(0.0);
                 (i, 0.7 * score - 0.3 * max_sim)
             })
@@ -1211,7 +1431,9 @@ fn mmr_select(
             .map(|(i, _)| i)
             .unwrap_or(0);
         let chosen = candidates.remove(best_idx);
-        if let Some(e) = &chosen.2 { selected_embs.push(e.clone()); }
+        if let Some(e) = &chosen.2 {
+            selected_embs.push(e.clone());
+        }
         result.push(chosen);
     }
     result
@@ -1229,14 +1451,22 @@ fn build_embed_text(todo_text: &str, comment_texts: &[String]) -> String {
 /// Extract !1/!2/!3 priority from text, returning (cleaned_text, priority).
 pub fn extract_priority(text: &str) -> (String, Option<u8>) {
     let mut priority = None;
-    let cleaned = text.split_whitespace()
-        .filter(|w| {
-            match *w {
-                "!1" => { priority = Some(1); false }
-                "!2" => { priority = Some(2); false }
-                "!3" => { priority = Some(3); false }
-                _ => true,
+    let cleaned = text
+        .split_whitespace()
+        .filter(|w| match *w {
+            "!1" => {
+                priority = Some(1);
+                false
             }
+            "!2" => {
+                priority = Some(2);
+                false
+            }
+            "!3" => {
+                priority = Some(3);
+                false
+            }
+            _ => true,
         })
         .collect::<Vec<_>>()
         .join(" ");
@@ -1247,5 +1477,19 @@ pub fn extract_priority(text: &str) -> (String, Option<u8>) {
 pub fn extract_url(text: &str) -> Option<String> {
     text.split_whitespace()
         .find(|w| w.starts_with("https://") || w.starts_with("http://"))
-        .map(|s| s.trim_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '-' && c != '_' && c != '.' && c != '?' && c != '=' && c != '&' && c != '#' && c != ':').to_string())
+        .map(|s| {
+            s.trim_matches(|c: char| {
+                !c.is_alphanumeric()
+                    && c != '/'
+                    && c != '-'
+                    && c != '_'
+                    && c != '.'
+                    && c != '?'
+                    && c != '='
+                    && c != '&'
+                    && c != '#'
+                    && c != ':'
+            })
+            .to_string()
+        })
 }

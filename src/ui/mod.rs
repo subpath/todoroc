@@ -1,26 +1,28 @@
 mod briefing;
-mod topics;
-mod todos;
 mod search;
+mod todos;
+mod topics;
 
 use ratatui::{
-    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
+    Frame,
 };
 
 use crate::app::{App, DetailField};
-use crate::sync::SyncKind;
 use crate::due_date;
-use chrono;
+use crate::sync::SyncKind;
 
 pub(super) fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
     } else {
-        format!("{}…", s.chars().take(max.saturating_sub(1)).collect::<String>())
+        format!(
+            "{}…",
+            s.chars().take(max.saturating_sub(1)).collect::<String>()
+        )
     }
 }
 
@@ -34,16 +36,16 @@ fn render_multiline_field(
     field_w: usize,
     label_fn: impl Fn(usize) -> Span<'static>,
 ) -> Vec<Line<'static>> {
-    let text_style  = Style::default().fg(if active { Color::White } else { Color::Gray });
+    let text_style = Style::default().fg(if active { Color::White } else { Color::Gray });
     let cursor_style = Style::default().fg(Color::Black).bg(Color::Cyan);
     let chars: Vec<char> = text.chars().collect();
     let cursor_line = if field_w > 0 { cursor / field_w } else { 0 };
-    let scroll_top  = cursor_line.saturating_sub(rows - 1);
+    let scroll_top = cursor_line.saturating_sub(rows - 1);
     let mut out = Vec::new();
     for row in 0..rows {
         let vis_line = scroll_top + row;
         let start = vis_line * field_w;
-        let end   = (start + field_w).min(chars.len());
+        let end = (start + field_w).min(chars.len());
         let label = label_fn(row);
         if start > chars.len() {
             let cur = if active && cursor == chars.len() && vis_line == cursor_line {
@@ -103,8 +105,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     // Status bar overlay at bottom of topics/todos area
     if let Some(msg) = &app.status_message {
-        let status = Paragraph::new(msg.as_str())
-            .style(Style::default().fg(Color::Yellow));
+        let status = Paragraph::new(msg.as_str()).style(Style::default().fg(Color::Yellow));
         let area = Rect {
             x: main_area.x,
             y: main_area.y + main_area.height.saturating_sub(1),
@@ -119,12 +120,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
         let (n_topics, n_todos, n_indexed) = app.db.stats().unwrap_or((0, 0, 0));
 
         let rows: &[(&str, String)] = &[
-            ("Model",   app.info.model_name.clone()),
+            ("Model", app.info.model_name.clone()),
             ("Model dir", app.info.model_dir.clone()),
-            ("Database",  app.info.db_path.clone()),
-            ("Topics",    n_topics.to_string()),
-            ("Items",     n_todos.to_string()),
-            ("Indexed",   format!("{} / {}", n_indexed, n_todos)),
+            ("Database", app.info.db_path.clone()),
+            ("Topics", n_topics.to_string()),
+            ("Items", n_todos.to_string()),
+            ("Indexed", format!("{} / {}", n_indexed, n_todos)),
         ];
 
         let label_w = 12u16;
@@ -132,10 +133,18 @@ pub fn draw(frame: &mut Frame, app: &App) {
         let dialog_h = rows.len() as u16 + 4;
         let x = size.x + (size.width.saturating_sub(dialog_w)) / 2;
         let y = size.y + (size.height.saturating_sub(dialog_h)) / 2;
-        let area = Rect { x, y, width: dialog_w, height: dialog_h };
+        let area = Rect {
+            x,
+            y,
+            width: dialog_w,
+            height: dialog_h,
+        };
 
         let block = Block::default()
-            .title(Span::styled(" Info ", Style::default().add_modifier(Modifier::BOLD)))
+            .title(Span::styled(
+                " Info ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ))
             .title_bottom(Span::styled(
                 " any key to close ",
                 Style::default().fg(Color::DarkGray),
@@ -167,10 +176,18 @@ pub fn draw(frame: &mut Frame, app: &App) {
         let dialog_h = 6u16;
         let x = size.x + (size.width.saturating_sub(dialog_w)) / 2;
         let y = size.y + (size.height.saturating_sub(dialog_h)) / 2;
-        let area = Rect { x, y, width: dialog_w, height: dialog_h };
+        let area = Rect {
+            x,
+            y,
+            width: dialog_w,
+            height: dialog_h,
+        };
 
         let block = Block::default()
-            .title(Span::styled(" Delete ", Style::default().add_modifier(Modifier::BOLD)))
+            .title(Span::styled(
+                " Delete ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Red));
 
@@ -182,7 +199,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
         ];
 
         frame.render_widget(Clear, area);
-        frame.render_widget(Paragraph::new(text).block(block).alignment(Alignment::Center), area);
+        frame.render_widget(
+            Paragraph::new(text)
+                .block(block)
+                .alignment(Alignment::Center),
+            area,
+        );
     }
 
     // Detail popup
@@ -191,10 +213,18 @@ pub fn draw(frame: &mut Frame, app: &App) {
         let dialog_h = size.height.saturating_sub(4).min(26);
         let x = size.x + (size.width.saturating_sub(dialog_w)) / 2;
         let y = size.y + (size.height.saturating_sub(dialog_h)) / 2;
-        let area = Rect { x, y, width: dialog_w, height: dialog_h };
+        let area = Rect {
+            x,
+            y,
+            width: dialog_w,
+            height: dialog_h,
+        };
 
         let block = Block::default()
-            .title(Span::styled(" Item Detail ", Style::default().add_modifier(Modifier::BOLD)))
+            .title(Span::styled(
+                " Item Detail ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ))
             .title_bottom(Span::styled(
                 " Tab:field  ↑↓:scroll  c:comment  ^Y:copy  Enter:save  Esc:cancel",
                 Style::default().fg(Color::DarkGray),
@@ -210,33 +240,80 @@ pub fn draw(frame: &mut Frame, app: &App) {
         let render_line = |label: &str, value: &str, cursor: usize, active: bool| -> Line {
             let chars: Vec<char> = value.chars().collect();
             let (cur_ch, rest): (String, String) = if cursor < chars.len() {
-                (chars[cursor].to_string(), chars[cursor + 1..].iter().collect())
+                (
+                    chars[cursor].to_string(),
+                    chars[cursor + 1..].iter().collect(),
+                )
             } else {
                 ("_".to_string(), String::new())
             };
             let before: String = chars[..cursor].iter().collect();
             // scroll before-text so cursor is always visible
-            let before_disp: String = before.chars().rev().take(field_w).collect::<Vec<_>>().into_iter().rev().collect();
-            let text_style  = Style::default().fg(if active { Color::White } else { Color::Gray });
+            let before_disp: String = before
+                .chars()
+                .rev()
+                .take(field_w)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            let text_style = Style::default().fg(if active { Color::White } else { Color::Gray });
             let cursor_style = Style::default().fg(Color::Black).bg(Color::Cyan);
-            let label_style = Style::default().fg(if active { Color::Cyan } else { Color::DarkGray });
+            let label_style =
+                Style::default().fg(if active { Color::Cyan } else { Color::DarkGray });
             Line::from(vec![
-                Span::styled(format!("{:indent$}{:<lw$}  ", "", label, indent = indent, lw = label_w), label_style),
+                Span::styled(
+                    format!(
+                        "{:indent$}{:<lw$}  ",
+                        "",
+                        label,
+                        indent = indent,
+                        lw = label_w
+                    ),
+                    label_style,
+                ),
                 Span::styled(before_disp, text_style),
-                if active { Span::styled(cur_ch.clone(), cursor_style) } else { Span::styled(cur_ch.clone(), text_style) },
+                if active {
+                    Span::styled(cur_ch.clone(), cursor_style)
+                } else {
+                    Span::styled(cur_ch.clone(), text_style)
+                },
                 Span::styled(rest, text_style),
             ])
         };
 
         let text_active = d.field == DetailField::Text;
-        let text_label_style = Style::default().fg(if text_active { Color::Cyan } else { Color::DarkGray });
-        let text_lines = render_multiline_field(&d.text, d.text_cursor, text_active, 2, field_w, move |row| {
-            if row == 0 {
-                Span::styled(format!("{:indent$}{:<lw$}  ", "", "Text", indent = indent, lw = label_w), text_label_style)
-            } else {
-                Span::styled(format!("{:width$}", "", width = indent + label_w + 2), Style::default())
-            }
+        let text_label_style = Style::default().fg(if text_active {
+            Color::Cyan
+        } else {
+            Color::DarkGray
         });
+        let text_lines = render_multiline_field(
+            &d.text,
+            d.text_cursor,
+            text_active,
+            2,
+            field_w,
+            move |row| {
+                if row == 0 {
+                    Span::styled(
+                        format!(
+                            "{:indent$}{:<lw$}  ",
+                            "",
+                            "Text",
+                            indent = indent,
+                            lw = label_w
+                        ),
+                        text_label_style,
+                    )
+                } else {
+                    Span::styled(
+                        format!("{:width$}", "", width = indent + label_w + 2),
+                        Style::default(),
+                    )
+                }
+            },
+        );
 
         let mut lines: Vec<Line> = vec![Line::from("")];
         lines.extend(text_lines);
@@ -245,18 +322,40 @@ pub fn draw(frame: &mut Frame, app: &App) {
         // Priority
         let pri_active = d.field == DetailField::Priority;
         let (pri_dot, pri_text, pri_color) = match d.priority {
-            Some(1) => ("[!!] ", "High",   Color::Red),
+            Some(1) => ("[!!] ", "High", Color::Red),
             Some(2) => ("[!] ", "Medium", Color::Yellow),
-            Some(3) => ("[.] ", "Low",    Color::Blue),
-            _       => ("[  ] ", "None",   Color::DarkGray),
+            Some(3) => ("[.] ", "Low", Color::Blue),
+            _ => ("[  ] ", "None", Color::DarkGray),
         };
         let hint_txt = "  ←/→ to change";
         lines.push(Line::from(vec![
-            Span::styled(format!("{:indent$}{:<lw$}  ", "", "Priority", indent = indent, lw = label_w),
-                Style::default().fg(if pri_active { Color::Cyan } else { Color::DarkGray })),
+            Span::styled(
+                format!(
+                    "{:indent$}{:<lw$}  ",
+                    "",
+                    "Priority",
+                    indent = indent,
+                    lw = label_w
+                ),
+                Style::default().fg(if pri_active {
+                    Color::Cyan
+                } else {
+                    Color::DarkGray
+                }),
+            ),
             Span::styled(pri_dot, Style::default().fg(pri_color)),
-            Span::styled(pri_text, Style::default().fg(if pri_active { Color::White } else { Color::Gray })),
-            Span::styled(if pri_active { hint_txt } else { "" }, Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                pri_text,
+                Style::default().fg(if pri_active {
+                    Color::White
+                } else {
+                    Color::Gray
+                }),
+            ),
+            Span::styled(
+                if pri_active { hint_txt } else { "" },
+                Style::default().fg(Color::DarkGray),
+            ),
         ]));
         lines.push(Line::from(""));
 
@@ -265,11 +364,46 @@ pub fn draw(frame: &mut Frame, app: &App) {
         lines.push(render_line("Due", &d.due, d.due_cursor, due_active));
         if !d.due.is_empty() {
             let (preview, ok) = match due_date::parse(&d.due) {
-                Ok(Some(date)) => { let (lbl, _) = due_date::label(date); (format!("{:indent$}{:<lw$}  → {}", "", "", lbl, indent=indent, lw=label_w), true) }
-                Ok(None)       => (format!("{:indent$}{:<lw$}  → (clear)", "", "", indent=indent, lw=label_w), true),
-                Err(e)         => (format!("{:indent$}{:<lw$}  ✗ {}", "", "", e, indent=indent, lw=label_w), false),
+                Ok(Some(date)) => {
+                    let (lbl, _) = due_date::label(date);
+                    (
+                        format!(
+                            "{:indent$}{:<lw$}  → {}",
+                            "",
+                            "",
+                            lbl,
+                            indent = indent,
+                            lw = label_w
+                        ),
+                        true,
+                    )
+                }
+                Ok(None) => (
+                    format!(
+                        "{:indent$}{:<lw$}  → (clear)",
+                        "",
+                        "",
+                        indent = indent,
+                        lw = label_w
+                    ),
+                    true,
+                ),
+                Err(e) => (
+                    format!(
+                        "{:indent$}{:<lw$}  ✗ {}",
+                        "",
+                        "",
+                        e,
+                        indent = indent,
+                        lw = label_w
+                    ),
+                    false,
+                ),
             };
-            lines.push(Line::from(Span::styled(preview, Style::default().fg(if ok { Color::DarkGray } else { Color::Red }))));
+            lines.push(Line::from(Span::styled(
+                preview,
+                Style::default().fg(if ok { Color::DarkGray } else { Color::Red }),
+            )));
         } else {
             lines.push(Line::from(""));
         }
@@ -277,17 +411,37 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
         // URL — 2 lines, always shown from the beginning
         let url_active = d.field == DetailField::Url;
-        let url_style  = Style::default().fg(if url_active { Color::White } else { Color::Gray });
-        let url_label_style = Style::default().fg(if url_active { Color::Cyan } else { Color::DarkGray });
+        let url_style = Style::default().fg(if url_active {
+            Color::White
+        } else {
+            Color::Gray
+        });
+        let url_label_style = Style::default().fg(if url_active {
+            Color::Cyan
+        } else {
+            Color::DarkGray
+        });
         let cursor_style = Style::default().fg(Color::Black).bg(Color::Cyan);
         let url_chars: Vec<char> = d.url.chars().collect();
         for row in 0..2usize {
             let start = row * field_w;
-            let end   = (start + field_w).min(url_chars.len());
+            let end = (start + field_w).min(url_chars.len());
             let label_part = if row == 0 {
-                Span::styled(format!("{:indent$}{:<lw$}  ", "", "URL", indent=indent, lw=label_w), url_label_style)
+                Span::styled(
+                    format!(
+                        "{:indent$}{:<lw$}  ",
+                        "",
+                        "URL",
+                        indent = indent,
+                        lw = label_w
+                    ),
+                    url_label_style,
+                )
             } else {
-                Span::styled(format!("{:width$}", "", width = indent + label_w + 2), Style::default())
+                Span::styled(
+                    format!("{:width$}", "", width = indent + label_w + 2),
+                    Style::default(),
+                )
             };
             if start > url_chars.len() {
                 lines.push(Line::from(label_part));
@@ -304,7 +458,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
                     spans.push(Span::styled(s, url_style));
                 }
             }
-            if url_active && d.url_cursor == url_chars.len() && row == (url_chars.len() / field_w).min(1) {
+            if url_active
+                && d.url_cursor == url_chars.len()
+                && row == (url_chars.len() / field_w).min(1)
+            {
                 spans.push(Span::styled("_", cursor_style));
             }
             lines.push(Line::from(spans));
@@ -314,20 +471,46 @@ pub fn draw(frame: &mut Frame, app: &App) {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
             Span::styled("  ── Comments ", Style::default().fg(Color::DarkGray)),
-            Span::styled("─".repeat(field_w.saturating_sub(2)), Style::default().fg(Color::from_u32(0x303030))),
+            Span::styled(
+                "─".repeat(field_w.saturating_sub(2)),
+                Style::default().fg(Color::from_u32(0x303030)),
+            ),
         ]));
         lines.push(Line::from(""));
 
         // New comment input (2-line text area)
         let nc_active = d.field == DetailField::NewComment;
-        let nc_label_style = Style::default().fg(if nc_active { Color::Cyan } else { Color::DarkGray });
-        lines.extend(render_multiline_field(&d.new_comment, d.new_comment_cursor, nc_active, 2, field_w, move |row| {
-            if row == 0 {
-                Span::styled(format!("{:indent$}{:<lw$}  ", "", "New", indent = indent, lw = label_w), nc_label_style)
-            } else {
-                Span::styled(format!("{:width$}", "", width = indent + label_w + 2), Style::default())
-            }
-        }));
+        let nc_label_style = Style::default().fg(if nc_active {
+            Color::Cyan
+        } else {
+            Color::DarkGray
+        });
+        lines.extend(render_multiline_field(
+            &d.new_comment,
+            d.new_comment_cursor,
+            nc_active,
+            2,
+            field_w,
+            move |row| {
+                if row == 0 {
+                    Span::styled(
+                        format!(
+                            "{:indent$}{:<lw$}  ",
+                            "",
+                            "New",
+                            indent = indent,
+                            lw = label_w
+                        ),
+                        nc_label_style,
+                    )
+                } else {
+                    Span::styled(
+                        format!("{:width$}", "", width = indent + label_w + 2),
+                        Style::default(),
+                    )
+                }
+            },
+        ));
         if nc_active {
             lines.push(Line::from(Span::styled(
                 format!("{:width$}  Enter to save", "", width = indent + label_w),
@@ -343,18 +526,44 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 .map(|dt| dt.format("%d-%m-%Y %H:%M").to_string())
                 .unwrap_or_else(|_| comment.created_at.clone());
             lines.push(Line::from(vec![
-                Span::styled(format!("  {:indent$}", "", indent = indent), Style::default()),
+                Span::styled(
+                    format!("  {:indent$}", "", indent = indent),
+                    Style::default(),
+                ),
                 Span::styled(ts, Style::default().fg(Color::from_u32(0x505050))),
-                if comment.url.is_some() { Span::styled(" link↗", Style::default().fg(Color::Cyan)) }
-                else { Span::raw("") },
-                if is_active { Span::styled("  [d:delete]", Style::default().fg(Color::from_u32(0x404040))) }
-                else { Span::raw("") },
+                if comment.url.is_some() {
+                    Span::styled(" link↗", Style::default().fg(Color::Cyan))
+                } else {
+                    Span::raw("")
+                },
+                if is_active {
+                    Span::styled(
+                        "  [d:delete]",
+                        Style::default().fg(Color::from_u32(0x404040)),
+                    )
+                } else {
+                    Span::raw("")
+                },
             ]));
-            let c_text = if is_active { d.comment_edit_text.as_str() } else { comment.text.as_str() };
+            let c_text = if is_active {
+                d.comment_edit_text.as_str()
+            } else {
+                comment.text.as_str()
+            };
             let c_cursor = if is_active { d.comment_edit_cursor } else { 0 };
-            lines.extend(render_multiline_field(c_text, c_cursor, is_active, 2, field_w, move |_| {
-                Span::styled(format!("{:width$}", "", width = indent + label_w + 2), Style::default())
-            }));
+            lines.extend(render_multiline_field(
+                c_text,
+                c_cursor,
+                is_active,
+                2,
+                field_w,
+                move |_| {
+                    Span::styled(
+                        format!("{:width$}", "", width = indent + label_w + 2),
+                        Style::default(),
+                    )
+                },
+            ));
             lines.push(Line::from(""));
         }
 
@@ -362,12 +571,14 @@ pub fn draw(frame: &mut Frame, app: &App) {
         lines.push(Line::from(""));
         let ts_style = Style::default().fg(Color::from_u32(0x606060));
         let fmt_ts = |ts: &Option<String>| -> String {
-            ts.as_deref().map(|s| {
-                // Parse RFC3339, format as "DD-MM-YYYY HH:MM"
-                chrono::DateTime::parse_from_rfc3339(s)
-                    .map(|dt| dt.format("%d-%m-%Y %H:%M").to_string())
-                    .unwrap_or_else(|_| s.to_string())
-            }).unwrap_or_else(|| "—".to_string())
+            ts.as_deref()
+                .map(|s| {
+                    // Parse RFC3339, format as "DD-MM-YYYY HH:MM"
+                    chrono::DateTime::parse_from_rfc3339(s)
+                        .map(|dt| dt.format("%d-%m-%Y %H:%M").to_string())
+                        .unwrap_or_else(|_| s.to_string())
+                })
+                .unwrap_or_else(|| "—".to_string())
         };
         lines.push(Line::from(vec![
             Span::styled("Created:    ", Style::default().fg(Color::DarkGray)),
@@ -393,15 +604,24 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     // Due date popup
     if app.due_popup {
-        let hint = "Enter:confirm  Esc:cancel  | 3d  3wd  fri  eow  W16  16w  DD-MM-YYYY  (empty=clear)";
+        let hint =
+            "Enter:confirm  Esc:cancel  | 3d  3wd  fri  eow  W16  16w  DD-MM-YYYY  (empty=clear)";
         let dialog_w = 64u16.min(size.width.saturating_sub(4));
         let dialog_h = 6u16;
         let x = size.x + (size.width.saturating_sub(dialog_w)) / 2;
         let y = size.y + (size.height.saturating_sub(dialog_h)) / 2;
-        let area = Rect { x, y, width: dialog_w, height: dialog_h };
+        let area = Rect {
+            x,
+            y,
+            width: dialog_w,
+            height: dialog_h,
+        };
 
         let block = Block::default()
-            .title(Span::styled(" Set Due Date ", Style::default().add_modifier(Modifier::BOLD)))
+            .title(Span::styled(
+                " Set Due Date ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ))
             .title_bottom(Span::styled(
                 format!(" {} ", hint),
                 Style::default().fg(Color::DarkGray),
@@ -412,7 +632,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
         let chars: Vec<char> = app.due_input.chars().collect();
         let before: String = chars[..app.due_cursor.min(chars.len())].iter().collect();
         let (cursor_ch, after): (String, String) = if app.due_cursor < chars.len() {
-            (chars[app.due_cursor].to_string(), chars[app.due_cursor + 1..].iter().collect())
+            (
+                chars[app.due_cursor].to_string(),
+                chars[app.due_cursor + 1..].iter().collect(),
+            )
         } else {
             ("_".to_string(), String::new())
         };
@@ -420,7 +643,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
         let input_line = Line::from(vec![
             Span::styled("  Due: ", Style::default().fg(Color::DarkGray)),
             Span::raw(before),
-            Span::styled(cursor_ch, Style::default().fg(Color::Yellow).add_modifier(Modifier::SLOW_BLINK)),
+            Span::styled(
+                cursor_ch,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::SLOW_BLINK),
+            ),
             Span::raw(after),
         ]);
 
@@ -431,7 +659,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 format!("  → {}", lbl)
             }
             Ok(None) => "  → (clear)".to_string(),
-            Err(e)   => format!("  ✗ {}", e),
+            Err(e) => format!("  ✗ {}", e),
         };
         let preview_color = if app.due_input.is_empty() || due_date::parse(&app.due_input).is_ok() {
             Color::DarkGray
@@ -456,10 +684,18 @@ pub fn draw(frame: &mut Frame, app: &App) {
         let dialog_h = 7u16;
         let x = size.x + (size.width.saturating_sub(dialog_w)) / 2;
         let y = size.y + (size.height.saturating_sub(dialog_h)) / 2;
-        let area = Rect { x, y, width: dialog_w, height: dialog_h };
+        let area = Rect {
+            x,
+            y,
+            width: dialog_w,
+            height: dialog_h,
+        };
 
         let block = Block::default()
-            .title(Span::styled(" Sync ", Style::default().add_modifier(Modifier::BOLD)))
+            .title(Span::styled(
+                " Sync ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ))
             .title_bottom(Span::styled(
                 " ↑↓:select  Enter:start  Esc:cancel ",
                 Style::default().fg(Color::DarkGray),
@@ -473,12 +709,18 @@ pub fn draw(frame: &mut Frame, app: &App) {
             let selected = i == app.sync_popup_selected;
             let label = truncate(kind.label(), max_label);
             let style = if selected {
-                Style::default().fg(Color::Black).bg(Color::White).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::White)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::White)
             };
             let prefix = if selected { "> " } else { "  " };
-            lines.push(Line::from(Span::styled(format!("{}{}", prefix, label), style)));
+            lines.push(Line::from(Span::styled(
+                format!("{}{}", prefix, label),
+                style,
+            )));
         }
 
         frame.render_widget(Clear, area);
@@ -501,13 +743,22 @@ pub fn draw(frame: &mut Frame, app: &App) {
         let dialog_h = 3u16;
         let x = main_area.x + main_area.width.saturating_sub(dialog_w);
         let y = main_area.y + main_area.height.saturating_sub(dialog_h);
-        let area = Rect { x, y, width: dialog_w, height: dialog_h };
+        let area = Rect {
+            x,
+            y,
+            width: dialog_w,
+            height: dialog_h,
+        };
 
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(color));
 
-        let text_color = if ss.done || ss.error { color } else { Color::White };
+        let text_color = if ss.done || ss.error {
+            color
+        } else {
+            Color::White
+        };
         let line = Line::from(vec![
             Span::styled(format!(" {} ", icon), Style::default().fg(color)),
             Span::styled(msg, Style::default().fg(text_color)),
@@ -525,10 +776,18 @@ pub fn draw(frame: &mut Frame, app: &App) {
         let dialog_h = (inner_rows + 4).min(size.height.saturating_sub(4));
         let x = size.x + (size.width.saturating_sub(dialog_w)) / 2;
         let y = size.y + (size.height.saturating_sub(dialog_h)) / 2;
-        let area = Rect { x, y, width: dialog_w, height: dialog_h };
+        let area = Rect {
+            x,
+            y,
+            width: dialog_w,
+            height: dialog_h,
+        };
 
         let block = Block::default()
-            .title(Span::styled(" Move to Topic ", Style::default().add_modifier(Modifier::BOLD)))
+            .title(Span::styled(
+                " Move to Topic ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ))
             .title_bottom(Span::styled(
                 " ↑↓:select  Enter:move  Esc:cancel ",
                 Style::default().fg(Color::DarkGray),
@@ -548,12 +807,18 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 let selected = i == app.move_popup_selected;
                 let name = truncate(&topic.name, max_name);
                 let style = if selected {
-                    Style::default().fg(Color::Black).bg(Color::White).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::White)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(Color::White)
                 };
                 let prefix = if selected { "> " } else { "  " };
-                lines.push(Line::from(Span::styled(format!("{}{}", prefix, name), style)));
+                lines.push(Line::from(Span::styled(
+                    format!("{}{}", prefix, name),
+                    style,
+                )));
             }
         }
 
@@ -567,10 +832,18 @@ pub fn draw(frame: &mut Frame, app: &App) {
         let dialog_h = 5u16;
         let x = size.x + (size.width.saturating_sub(dialog_w)) / 2;
         let y = size.y + (size.height.saturating_sub(dialog_h)) / 2;
-        let area = Rect { x, y, width: dialog_w, height: dialog_h };
+        let area = Rect {
+            x,
+            y,
+            width: dialog_w,
+            height: dialog_h,
+        };
 
         let block = Block::default()
-            .title(Span::styled(" Quit ", Style::default().add_modifier(Modifier::BOLD)))
+            .title(Span::styled(
+                " Quit ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Yellow));
 
@@ -583,6 +856,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
         ];
 
         frame.render_widget(Clear, area);
-        frame.render_widget(Paragraph::new(text).block(block).alignment(Alignment::Center), area);
+        frame.render_widget(
+            Paragraph::new(text)
+                .block(block)
+                .alignment(Alignment::Center),
+            area,
+        );
     }
 }
