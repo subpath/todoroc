@@ -11,7 +11,9 @@ A terminal-based todo manager with semantic search, GitHub, and Jira integration
 ## Features
 
 - **Multi-pane TUI** — topics list and todos list; search is a floating overlay (`/`)
-- **Virtual topics** — built-in "🔄 In Progress", "✅ Completed", and "📅 Due This Week" aggregate views across all topics
+- **Daily briefing** — `D` opens a focused overlay that surfaces your most important todos across all topics, ranked into Must Do / In Flight / Recommended / Waiting sections
+- **4-state todos** — `Space` cycles: todo → in progress → blocked → done; blocked items are shown with a `[⊘]` indicator
+- **Virtual topics** — built-in "🔄 In Progress", "✅ Completed", and "📅 Due This Week" aggregate views across all topics; toggle visibility with `V`
 - **Topic reordering** — `J`/`K` moves topics up and down; order is persisted to the database
 - **Cursor memory** — switching topics and coming back restores your last position in each list
 - **Detail panel** — press `Enter` to open a full editor: text, priority, due date, URL, timestamps, and comments
@@ -78,7 +80,7 @@ Options:
 | `m` | Move selected todo to another topic |
 | `@` | Set due date |
 | `+` / `-` | Snooze due date forward / back by one day |
-| `Space` | Cycle state: todo → in progress → done; auto-advances cursor |
+| `Space` | Cycle state: todo → in progress → blocked → done; auto-advances cursor |
 | `o` | Open attached URL in browser |
 | `s` | Toggle sort: bucketed (priority → due date → creation) / flat |
 
@@ -91,7 +93,9 @@ Options:
 | `↑↓` / `jk` | Navigate |
 | `Shift+↑` / `Shift+↓` | Jump to top / bottom |
 | `/` | Open search overlay |
+| `D` | Open daily briefing overlay |
 | `S` | Open sync popup (Full / GitHub / Jira) |
+| `V` | Toggle virtual topics (In Progress / Completed / Due This Week) |
 | `n` | New topic (when Topics focused) |
 | `e` | Edit selected topic |
 | `d` | Delete selected topic |
@@ -185,6 +189,28 @@ On launch, if any todos are overdue, a summary is printed to the terminal before
 
   Press Enter to open the app...
 ```
+
+## Daily Briefing
+
+Press `D` to open the Daily Focus overlay. It pulls together your most important unfinished todos from every topic and organizes them into four ranked sections:
+
+| Section | Contents |
+|---------|----------|
+| **⚡ Must Do** | High-priority or overdue items |
+| **🔄 In Flight** | Items currently in progress |
+| **📋 Recommended** | Other actionable items, ranked by urgency and priority |
+| **⊘ Waiting** | Blocked items |
+
+Each row shows the todo text, due date badge, priority badge, a link indicator if a URL is attached, and the source topic name in dim text.
+
+| Key | Action |
+|-----|--------|
+| `↑↓` / `jk` | Navigate items |
+| `Space` | Cycle state (todo → in progress → blocked → done) |
+| `Enter` | Jump to the item in its topic |
+| `+` / `-` | Snooze due date forward / back by one day |
+| `o` | Open attached URL in browser |
+| `Esc` / `q` | Close overlay |
 
 ## Search
 
