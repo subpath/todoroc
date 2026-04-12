@@ -7,6 +7,7 @@
 A terminal-based todo manager with semantic search, GitHub, and Jira integrations.
 
 ![Rust](https://img.shields.io/badge/rust-stable-orange)
+[![CI](https://github.com/subpath/todoroc/actions/workflows/ci.yml/badge.svg)](https://github.com/subpath/todoroc/actions/workflows/ci.yml)
 
 ## Features
 
@@ -32,19 +33,36 @@ A terminal-based todo manager with semantic search, GitHub, and Jira integration
 
 ## Installation
 
-```bash
-# Requires Rust stable
-make release
+### Pre-built binary (recommended)
 
-# Install to ~/.local/bin/todo
-make install
+```sh
+curl -fsSL https://raw.githubusercontent.com/subpath/todoroc/main/install.sh | sh
+```
+
+Downloads the latest release for your OS and architecture and installs to `~/.local/bin/todo`.
+
+```sh
+# specific version
+VERSION=v1.2.0 curl -fsSL https://raw.githubusercontent.com/subpath/todoroc/main/install.sh | sh
+
+# custom install directory
+INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/subpath/todoroc/main/install.sh | sh
+```
+
+### Build from source
+
+Requires Rust stable.
+
+```bash
+make install   # builds release binary and copies to ~/.local/bin/todo
 ```
 
 ## First Run
 
 ```bash
-# Download the default embedding model (required for semantic search)
-todo --setup
+# Download and compile the default embedding model (required for semantic search)
+todo --model sentence-transformers/all-MiniLM-L6-v2
+todo --compile-model
 
 # Launch
 todo
