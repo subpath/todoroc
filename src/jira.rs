@@ -51,6 +51,10 @@ impl JiraIssue {
     fn is_done(&self) -> bool {
         self.fields.status.status_category.key == "done"
     }
+
+    fn is_in_progress(&self) -> bool {
+        self.fields.status.status_category.key == "indeterminate"
+    }
 }
 
 /// Read the public Jira site hostname from ~/.config/acli/jira_config.yaml.
@@ -125,11 +129,12 @@ fn sync_topic_headless(db: &Database, embedder: Option<&Embedder>, topic_name: &
     let due_dates = fetch_due_dates(issues);
 
     for issue in issues {
-        let text   = format!("{} {}", issue.key, issue.fields.summary);
-        let url    = issue.browse_url(site_base);
-        let done   = issue.is_done();
-        let prefix = format!("{} ", issue.key);
-        let embedding = embedder.and_then(|e| e.embed(&issue.fields.summary).ok());
+        let text        = format!("{} {}", issue.key, issue.fields.summary);
+        let url         = issue.browse_url(site_base);
+        let done        = issue.is_done();
+        let in_progress = issue.is_in_progress();
+        let prefix      = format!("{} ", issue.key);
+        let embedding   = embedder.and_then(|e| e.embed(&text).ok());
         let todo_id = match db.find_todo_by_prefix(topic.id, &prefix)? {
             Some((id, _)) => {
                 db.update_todo_text_and_done(id, &text, done, Some(url.as_str()), embedding.as_deref())?;
@@ -140,6 +145,7 @@ fn sync_topic_headless(db: &Database, embedder: Option<&Embedder>, topic_name: &
                 todo.id
             }
         };
+        db.set_todo_in_progress(todo_id, in_progress)?;
         if let Some(due) = due_dates.get(&issue.key) {
             db.set_todo_due_date(todo_id, Some(due.as_str()))?;
         }
@@ -204,11 +210,12 @@ fn sync_topic(db: &Database, embedder: Option<&Embedder>, topic_name: &str, issu
     for issue in issues {
         pb.set_message(issue.key.clone());
 
-        let text = format!("{} {}", issue.key, issue.fields.summary);
-        let url = issue.browse_url(site_base);
-        let done = issue.is_done();
-        let prefix = format!("{} ", issue.key);
-        let embedding = embedder.and_then(|e| e.embed(&issue.fields.summary).ok());
+        let text        = format!("{} {}", issue.key, issue.fields.summary);
+        let url         = issue.browse_url(site_base);
+        let done        = issue.is_done();
+        let in_progress = issue.is_in_progress();
+        let prefix      = format!("{} ", issue.key);
+        let embedding   = embedder.and_then(|e| e.embed(&text).ok());
 
         let todo_id = match db.find_todo_by_prefix(topic.id, &prefix)? {
             Some((id, _)) => {
@@ -222,6 +229,7 @@ fn sync_topic(db: &Database, embedder: Option<&Embedder>, topic_name: &str, issu
                 todo.id
             }
         };
+        db.set_todo_in_progress(todo_id, in_progress)?;
         if let Some(due) = due_dates.get(&issue.key) {
             db.set_todo_due_date(todo_id, Some(due.as_str()))?;
         }

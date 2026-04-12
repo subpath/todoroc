@@ -9,8 +9,6 @@ mod setup;
 mod sync;
 mod ui;
 
-use tract_nnef;
-
 use std::{
     fs,
     io,
@@ -20,7 +18,7 @@ use std::{
 
 use anyhow::Result;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    event::{self, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -63,20 +61,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    // --compile-model  →  compile ONNX → NNEF cache (run via debug/cargo run to avoid OOM)
-    if args.iter().any(|a| a == "--compile-model") {
-        let model_dir = dir.join("model");
-        println!("Compiling model (this may take a minute and uses significant RAM)...");
-        let typed = embeddings::Embedder::compile_onnx(&model_dir)?;
-        let nnef_path = model_dir.join("model.nnef");
-        tract_nnef::nnef().write_to_dir(&typed, &nnef_path)
-            .map_err(|e| anyhow::anyhow!("Failed to save compiled model: {e}"))?;
-        println!("Compiled model saved to {}", nnef_path.display());
-        println!("The `todo` binary will now load instantly without this step.");
-        return Ok(());
-    }
-
-    // --reindex  →  re-embed all todos with current model
+// --reindex  →  re-embed all todos with current model
     if args.iter().any(|a| a == "--reindex") {
         let db_path = dir.join("todos.db");
         setup::reindex(db_path.to_str().unwrap(), &dir.join("model"))?;
@@ -192,7 +177,6 @@ fn main() -> Result<()> {
         let _ = crossterm::execute!(
             std::io::stdout(),
             crossterm::terminal::LeaveAlternateScreen,
-            crossterm::event::DisableMouseCapture,
         );
         original_hook(info);
     }));
@@ -200,7 +184,7 @@ fn main() -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -208,11 +192,7 @@ fn main() -> Result<()> {
 
     // Restore terminal
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
     result
@@ -283,6 +263,8 @@ fn run_loop(
                 handle_move_popup(app, key.code)?;
             } else if app.detail.is_some() {
                 handle_detail(app, key.code, key.modifiers)?;
+            } else if app.briefing_open {
+                handle_briefing(app, key.code)?;
             } else if app.search_open {
                 handle_search_overlay(app, key.code)?;
             } else {
@@ -463,10 +445,6 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
         KeyCode::Char(' ') => {
             if app.focus == Focus::Todos {
                 app.toggle_todo()?;
-                // Auto-advance to the next item after toggling
-                if app.selected_todo + 1 < app.todos.len() {
-                    app.selected_todo += 1;
-                }
             }
         }
 
@@ -528,6 +506,31 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result
 
         KeyCode::Char('S') => app.open_sync_popup(),
 
+        KeyCode::Char('D') => app.open_briefing()?,
+
+        KeyCode::Char('V') => app.toggle_virtual_topics()?,
+
+        _ => {}
+    }
+    Ok(())
+}
+
+fn handle_briefing(app: &mut App, key: KeyCode) -> Result<()> {
+    match key {
+        KeyCode::Esc | KeyCode::Char('q') => app.close_briefing(),
+        KeyCode::Up   | KeyCode::Char('k') => {
+            if app.selected_briefing > 0 { app.selected_briefing -= 1; }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.selected_briefing + 1 < app.briefing_items.len() {
+                app.selected_briefing += 1;
+            }
+        }
+        KeyCode::Enter => app.briefing_jump()?,
+        KeyCode::Char(' ') => app.briefing_toggle_todo()?,
+        KeyCode::Char('+') => app.briefing_snooze(1)?,
+        KeyCode::Char('-') => app.briefing_snooze(-1)?,
+        KeyCode::Char('o') => app.briefing_open_url(),
         _ => {}
     }
     Ok(())

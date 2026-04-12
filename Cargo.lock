@@ -1663,6 +1663,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "rattles"
+version = "0.2.2"
+source = "git+https://github.com/vyfor/rattles#057fcd732ae1e0c4dcabe3d6cb7d37f3398ecc93"
+
+[[package]]
 name = "rawpointer"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2249,12 +2254,12 @@ dependencies = [
  "dirs",
  "indicatif",
  "ratatui",
+ "rattles",
  "rusqlite",
  "rusqlite_migration",
  "serde",
  "serde_json",
  "tokenizers",
- "tract-nnef",
  "tract-onnx",
  "ureq",
 ]

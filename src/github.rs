@@ -94,7 +94,7 @@ fn sync_topic(db: &Database, embedder: Option<&Embedder>, topic_name: &str, prs:
         pb.set_message(format!("#{}", pr.number));
 
         let url = format!("https://github.com/{}/pull/{}", pr.repository.name_with_owner, pr.number);
-        let embedding = embedder.and_then(|e| e.embed(&pr.title).ok());
+        let embedding = embedder.and_then(|e| e.embed(&text).ok());
 
         match db.find_todo_by_prefix(topic.id, &prefix)? {
             Some((id, _)) => {
@@ -161,7 +161,7 @@ fn sync_topic_headless(db: &Database, embedder: Option<&Embedder>, topic_name: &
         let text   = format!("#{} {} [{}]", pr.number, pr.title, pr.repository.name_with_owner);
         let done   = pr.state.to_lowercase() != "open";
         let url    = format!("https://github.com/{}/pull/{}", pr.repository.name_with_owner, pr.number);
-        let embedding = embedder.and_then(|e| e.embed(&pr.title).ok());
+        let embedding = embedder.and_then(|e| e.embed(&text).ok());
         match db.find_todo_by_prefix(topic.id, &prefix)? {
             Some((id, _)) => { db.update_todo_text_and_done(id, &text, done, Some(url.as_str()), embedding.as_deref())?; }
             None          => { db.insert_todo(topic.id, &text, Some(url.as_str()), embedding.as_deref())?; }

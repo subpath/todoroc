@@ -117,6 +117,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 ("[x]", Color::Green)
             } else if todo.in_progress {
                 ("[~]", Color::Yellow)
+            } else if todo.blocked {
+                ("[⊘]", Color::Red)
             } else {
                 ("[ ]", Color::White)
             };

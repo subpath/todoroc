@@ -22,4 +22,5 @@ pub struct Todo {
     pub due_date: Option<String>,    // ISO date "YYYY-MM-DD"
     pub priority: Option<u8>,        // 1 = high, 2 = medium, 3 = low
     pub in_progress: bool,
+    pub blocked: bool,
 }

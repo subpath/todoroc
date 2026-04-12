@@ -68,6 +68,10 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
                 ("[~]",
                  Style::default().fg(Color::Yellow),
                  Style::default().fg(Color::White))
+            } else if t.blocked {
+                ("[⊘]",
+                 Style::default().fg(Color::Red),
+                 Style::default().fg(Color::Red))
             } else {
                 ("[ ]",
                  Style::default().fg(Color::White),

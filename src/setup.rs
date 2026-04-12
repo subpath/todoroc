@@ -23,7 +23,9 @@ pub fn download_model(model_dir: &PathBuf, model: &str) -> Result<()> {
 
     // Save selected model name
     std::fs::write(
-        model_dir.parent().unwrap().join("model_name.txt"),
+        model_dir.parent()
+            .context("Model directory has no parent path")?
+            .join("model_name.txt"),
         model,
     )?;
 
@@ -107,7 +109,13 @@ pub fn reindex(db_path: &str, model_dir: &PathBuf) -> Result<()> {
     let mut errors = 0usize;
     for todo in &todos {
         pb.set_message(truncate(&todo.text, 35));
-        match embedder.embed(&todo.text) {
+        let comments = db.all_comment_texts_by_todo(todo.id).unwrap_or_default();
+        let embed_text = if comments.is_empty() {
+            todo.text.clone()
+        } else {
+            format!("{}\n{}", todo.text, comments.join("\n"))
+        };
+        match embedder.embed(&embed_text) {
             Ok(emb) => {
                 db.update_embedding(todo.id, &emb)?;
             }
@@ -136,7 +144,13 @@ pub fn reindex_headless(db: &Database, embedder: Option<&Embedder>, report: &dyn
     let todos = db.all_todos()?;
     report(&format!("Reindexing {} items…", todos.len()));
     for todo in &todos {
-        if let Ok(emb) = embedder.embed(&todo.text) {
+        let comments = db.all_comment_texts_by_todo(todo.id).unwrap_or_default();
+        let embed_text = if comments.is_empty() {
+            todo.text.clone()
+        } else {
+            format!("{}\n{}", todo.text, comments.join("\n"))
+        };
+        if let Ok(emb) = embedder.embed(&embed_text) {
             db.update_embedding(todo.id, &emb)?;
         }
     }

@@ -1,3 +1,4 @@
+mod briefing;
 mod topics;
 mod todos;
 mod search;
@@ -93,6 +94,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
     // Search overlay
     if app.search_open {
         search::draw(frame, app);
+    }
+
+    // Daily briefing overlay
+    if app.briefing_open {
+        briefing::draw(frame, app);
     }
 
     // Status bar overlay at bottom of topics/todos area
@@ -481,17 +487,17 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     // Sync status indicator — small bordered box in bottom-right of main area
     if let Some(ss) = &app.sync_status {
-        const SPINNER: [&str; 10] = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
         let (icon, color) = if ss.error {
             ("✗", Color::Red)
         } else if ss.done {
             ("✓", Color::Green)
         } else {
-            (SPINNER[ss.spinner_frame % 10], Color::Cyan)
+            use rattles::presets::prelude as presets;
+            (presets::dots().frame(ss.spinner_frame), Color::Cyan)
         };
 
         let msg = truncate(&ss.message, 34);
-        let dialog_w = (msg.chars().count() as u16 + 8).min(main_area.width.saturating_sub(2));
+        let dialog_w = 42u16.min(main_area.width.saturating_sub(2));
         let dialog_h = 3u16;
         let x = main_area.x + main_area.width.saturating_sub(dialog_w);
         let y = main_area.y + main_area.height.saturating_sub(dialog_h);

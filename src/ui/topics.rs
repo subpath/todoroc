@@ -55,19 +55,21 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    // Separator between virtual topics (0-2) and real topics (3+)
-    let has_real_topics = app.topics.len() > 3;
-    if has_real_topics {
+    // Separator between virtual topics (id < 0) and real topics (id > 0)
+    let virtual_count = app.topics.iter().filter(|t| t.id < 0).count();
+    let has_real_topics = app.topics.iter().any(|t| t.id > 0);
+    let has_separator = virtual_count > 0 && has_real_topics;
+    if has_separator {
         let sep = ListItem::new(Line::from(Span::styled(
             "  ────────────────────",
             Style::default().fg(Color::from_u32(0x505050)),
         )));
-        items.insert(3, sep);
+        items.insert(virtual_count, sep);
     }
 
     // Show input line when inserting.
-    // Real topics (selected_topic >= 3) are offset by 1 in `items` due to the separator.
-    let items_offset = |idx: usize| if has_real_topics && idx >= 3 { idx + 1 } else { idx };
+    // Real topics are offset by 1 in `items` due to the separator.
+    let items_offset = |idx: usize| if has_separator && idx >= virtual_count { idx + 1 } else { idx };
 
     if focused && app.mode == Mode::Insert {
         let chars: Vec<char> = app.input.chars().collect();
@@ -92,7 +94,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     let hint = if focused && app.mode == Mode::Normal {
-        " n:new  e:edit  d:del  J/K:reorder  ↑↓/jk:nav "
+        " n:new  e:edit  d:del  J/K:reorder  V:toggle views  ↑↓/jk:nav "
     } else {
         ""
     };

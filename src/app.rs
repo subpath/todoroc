@@ -118,6 +118,21 @@ pub struct DetailState {
     pub detail_scroll: u16,
 }
 
+#[derive(Clone, PartialEq)]
+pub enum BriefingSection {
+    MustDo,
+    InFlight,
+    Recommended,
+    Waiting,
+}
+
+#[derive(Clone)]
+pub struct BriefingItem {
+    pub todo: Todo,
+    pub topic_name: String,
+    pub section: BriefingSection,
+}
+
 pub struct SyncStatus {
     pub message: String,
     pub done: bool,
@@ -169,6 +184,10 @@ pub struct App {
     pub search_open: bool,
     pub topic_cursor_memory: HashMap<i64, usize>,
     pub last_topic_id: Option<i64>,
+    pub show_virtual_topics: bool,
+    pub briefing_open: bool,
+    pub briefing_items: Vec<BriefingItem>,
+    pub selected_briefing: usize,
 }
 
 impl App {
@@ -177,9 +196,17 @@ impl App {
             Topic { id: -1, name: "🔄 In Progress".to_string() },
             Topic { id: -2, name: "✅ Completed".to_string() },
             Topic { id: -3, name: "📅 Due This Week".to_string() },
+            Topic { id: -4, name: "📋 All Tasks".to_string() },
         ];
         topics.extend(db.list_topics()?);
-        let topic_counts = db.topic_counts()?;
+        let mut topic_counts = db.topic_counts()?;
+        let (in_progress, completed) = db.virtual_topic_counts()?;
+        topic_counts.insert(-1, (in_progress, 0));
+        topic_counts.insert(-2, (completed, completed));
+        let due_this_week = db.due_this_week_count()?;
+        topic_counts.insert(-3, (due_this_week, 0));
+        let (all_total, all_done) = db.all_todos_count()?;
+        topic_counts.insert(-4, (all_total, all_done));
         let mut todos = db.todos_in_progress()?; // first topic is "In Progress"
         TodoSort::Bucketed.apply(&mut todos);
 
@@ -220,6 +247,10 @@ impl App {
             search_open: false,
             topic_cursor_memory: HashMap::new(),
             last_topic_id: Some(-1),
+            show_virtual_topics: true,
+            briefing_open: false,
+            briefing_items: vec![],
+            selected_briefing: 0,
         })
     }
 
@@ -228,7 +259,22 @@ impl App {
     }
 
     pub fn is_virtual_topic(&self) -> bool {
-        matches!(self.selected_topic_id(), Some(-1) | Some(-2) | Some(-3))
+        matches!(self.selected_topic_id(), Some(-1) | Some(-2) | Some(-3) | Some(-4))
+    }
+
+    pub fn toggle_virtual_topics(&mut self) -> Result<()> {
+        let current_id = self.selected_topic_id();
+        self.show_virtual_topics = !self.show_virtual_topics;
+        self.reload_topics_list()?;
+        // Restore selection; fall back to first real topic if current was a now-hidden virtual
+        let new_pos = current_id
+            .and_then(|id| self.topics.iter().position(|t| t.id == id))
+            .or_else(|| self.topics.iter().position(|t| t.id > 0))
+            .unwrap_or(0)
+            .min(self.topics.len().saturating_sub(1));
+        self.selected_topic = new_pos;
+        self.reload_todos()?;
+        Ok(())
     }
 
     fn embed_with_status(&mut self, text: &str) -> Option<Vec<f32>> {
@@ -242,12 +288,26 @@ impl App {
         }
     }
 
+    fn reembed_todo(&mut self, todo_id: i64, todo_text: &str) -> Result<()> {
+        let comments = self.db.all_comment_texts_by_todo(todo_id)?;
+        let embed_text = build_embed_text(todo_text, &comments);
+        if let Some(emb) = self.embed_with_status(&embed_text) {
+            self.db.update_embedding(todo_id, &emb)?;
+        }
+        Ok(())
+    }
+
     fn reload_topics_list(&mut self) -> Result<()> {
-        let mut topics = vec![
-            Topic { id: -1, name: "🔄 In Progress".to_string() },
-            Topic { id: -2, name: "✅ Completed".to_string() },
-            Topic { id: -3, name: "📅 Due This Week".to_string() },
-        ];
+        let mut topics: Vec<Topic> = if self.show_virtual_topics {
+            vec![
+                Topic { id: -1, name: "🔄 In Progress".to_string() },
+                Topic { id: -2, name: "✅ Completed".to_string() },
+                Topic { id: -3, name: "📅 Due This Week".to_string() },
+                Topic { id: -4, name: "📋 All Tasks".to_string() },
+            ]
+        } else {
+            vec![]
+        };
         topics.extend(self.db.list_topics()?);
         self.topics = topics;
         if self.selected_topic >= self.topics.len() {
@@ -276,6 +336,7 @@ impl App {
             Some(-1) => self.db.todos_in_progress()?,
             Some(-2) => self.db.todos_completed()?,
             Some(-3) => self.db.todos_due_this_week()?,
+            Some(-4) => self.db.todos_all()?,
             Some(id) => self.db.todos_for_topic(id)?,
             None     => vec![],
         };
@@ -299,6 +360,8 @@ impl App {
         self.topic_counts.insert(-2, (completed, completed));
         let due_this_week = self.db.due_this_week_count()?;
         self.topic_counts.insert(-3, (due_this_week, 0));
+        let (all_total, all_done) = self.db.all_todos_count()?;
+        self.topic_counts.insert(-4, (all_total, all_done));
 
         self.last_topic_id = new_id;
         Ok(())
@@ -314,6 +377,7 @@ impl App {
             Some(-1) => self.db.todos_in_progress()?,
             Some(-2) => self.db.todos_completed()?,
             Some(-3) => self.db.todos_due_this_week()?,
+            Some(-4) => self.db.todos_all()?,
             Some(id) => self.db.todos_for_topic(id)?,
             None => vec![],
         };
@@ -342,7 +406,9 @@ impl App {
             let url = extract_url(&clean).or_else(|| todo.url.clone());
             let done = todo.done;
             let id = todo.id;
-            let embedding = self.embed_with_status(&clean);
+            let comments = self.db.all_comment_texts_by_todo(id)?;
+            let embed_text = build_embed_text(&clean, &comments);
+            let embedding = self.embed_with_status(&embed_text);
             self.db.update_todo_text_and_done(id, &clean, done, url.as_deref(), embedding.as_deref())?;
             if priority.is_some() {
                 self.db.set_todo_priority(id, priority)?;
@@ -353,8 +419,7 @@ impl App {
     }
 
     pub fn add_topic(&mut self, name: &str) -> Result<()> {
-        let embedding = self.embed_with_status(name);
-        let topic = self.db.insert_topic(name, embedding.as_deref())?;
+        let topic = self.db.insert_topic(name, None)?;
         self.topics.push(topic);
         self.selected_topic = self.topics.len() - 1;
         self.reload_todos()?;
@@ -404,10 +469,11 @@ impl App {
 
     pub fn toggle_todo(&mut self) -> Result<()> {
         if let Some(todo) = self.todos.get(self.selected_todo) {
-            let (new_done, new_in_progress) = self.db.toggle_todo(todo.id)?;
+            let (new_done, new_in_progress, new_blocked) = self.db.toggle_todo(todo.id)?;
             if let Some(t) = self.todos.get_mut(self.selected_todo) {
                 t.done = new_done;
                 t.in_progress = new_in_progress;
+                t.blocked = new_blocked;
             }
         }
         Ok(())
@@ -455,24 +521,25 @@ impl App {
     }
 
     pub fn confirm_detail(&mut self) -> Result<()> {
-        let Some(d) = &self.detail else { return Ok(()); };
-        let id = d.todo_id;
+        let (id, due_str, text, priority, url, comment_texts) = {
+            let Some(d) = &self.detail else { return Ok(()); };
+            let url = if d.url.is_empty() { None } else { Some(d.url.clone()) };
+            let comment_texts: Vec<String> = d.comments.iter().map(|c| c.text.clone()).collect();
+            (d.todo_id, d.due.clone(), d.text.clone(), d.priority, url, comment_texts)
+        };
 
-        let due_date = if d.due.is_empty() {
+        let due_date = if due_str.is_empty() {
             Ok(None)
         } else {
-            due_date::parse(&d.due).map(|opt| opt.map(|date| date.format("%Y-%m-%d").to_string()))
+            due_date::parse(&due_str).map(|opt| opt.map(|date| date.format("%Y-%m-%d").to_string()))
         };
         let due_date = match due_date {
             Ok(v) => v,
             Err(msg) => { self.status_message = Some(msg); return Ok(()); }
         };
 
-        let text = d.text.clone();
-        let priority = d.priority;
-        let url = if d.url.is_empty() { None } else { Some(d.url.clone()) };
-
-        let embedding = self.embed_with_status(&text);
+        let embed_text = build_embed_text(&text, &comment_texts);
+        let embedding = self.embed_with_status(&embed_text);
         if let Some(todo) = self.todos.iter().find(|t| t.id == id) {
             self.db.update_todo_text_and_done(id, &text, todo.done, url.as_deref(), embedding.as_deref())?;
         }
@@ -605,10 +672,20 @@ impl App {
             })
             .collect();
 
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         let mut undone: Vec<_> = scored.iter().filter(|(t, _)| !t.done).take(7).cloned().collect();
         let done: Vec<_>       = scored.iter().filter(|(t, _)|  t.done).take(5).cloned().collect();
         undone.extend(done);
+
+        // Secondary pass: surface todos whose comments contain the raw query text.
+        let comment_hits = self.db.todos_with_comment_matching(&self.search_query.clone())?;
+        let seen_ids: std::collections::HashSet<i64> = undone.iter().map(|(t, _)| t.id).collect();
+        for todo in comment_hits {
+            if !seen_ids.contains(&todo.id) {
+                undone.push((todo, 0.0));
+            }
+        }
+
         self.search_results = undone;
         self.selected_search_result = 0;
         Ok(())
@@ -698,7 +775,8 @@ impl App {
             Some(Focus::Todos) => {
                 let text = self.todos.get(self.selected_todo)
                     .map(|t| t.text.as_str()).unwrap_or("this todo");
-                let label = if text.len() > 40 { format!("{}…", &text[..40]) } else { text.to_string() };
+                let truncated: String = text.chars().take(40).collect();
+                let label = if truncated.len() < text.len() { format!("{}…", truncated) } else { text.to_string() };
                 format!("Delete \"{}\"?", label)
             }
             _ => "Delete?".into(),
@@ -710,12 +788,16 @@ impl App {
         let text = d.new_comment.trim().to_string();
         if text.is_empty() { return Ok(()); }
         let todo_id = d.todo_id;
+        let todo_text = d.text.clone();
         let url = extract_url(&text);
         let comment = self.db.insert_comment(todo_id, &text, url.as_deref())?;
-        let d = self.detail.as_mut().unwrap();
-        d.comments.insert(0, comment); // prepend (newest first)
-        d.new_comment.clear();
-        d.new_comment_cursor = 0;
+        {
+            let d = self.detail.as_mut().unwrap();
+            d.comments.insert(0, comment); // prepend (newest first)
+            d.new_comment.clear();
+            d.new_comment_cursor = 0;
+        }
+        self.reembed_todo(todo_id, &todo_text)?;
         Ok(())
     }
 
@@ -723,19 +805,23 @@ impl App {
         let Some(d) = &self.detail else { return Ok(()); };
         let DetailField::ExistingComment(i) = d.field.clone() else { return Ok(()); };
         let comment_id = d.comments[i].id;
-        let _comment_count = d.comments.len();
+        let todo_id = d.todo_id;
+        let todo_text = d.text.clone();
         self.db.delete_comment(comment_id)?;
-        let d = self.detail.as_mut().unwrap();
-        d.comments.remove(i);
-        // Move focus
-        let new_count = d.comments.len();
-        d.field = if new_count == 0 {
-            DetailField::NewComment
-        } else if i < new_count {
-            DetailField::ExistingComment(i)
-        } else {
-            DetailField::ExistingComment(new_count - 1)
-        };
+        {
+            let d = self.detail.as_mut().unwrap();
+            d.comments.remove(i);
+            // Move focus
+            let new_count = d.comments.len();
+            d.field = if new_count == 0 {
+                DetailField::NewComment
+            } else if i < new_count {
+                DetailField::ExistingComment(i)
+            } else {
+                DetailField::ExistingComment(new_count - 1)
+            };
+        }
+        self.reembed_todo(todo_id, &todo_text)?;
         Ok(())
     }
 
@@ -744,22 +830,29 @@ impl App {
         let DetailField::ExistingComment(i) = d.field.clone() else { return Ok(()); };
         let text = d.comment_edit_text.trim().to_string();
         let comment_id = d.comments[i].id;
+        let todo_id = d.todo_id;
+        let todo_text = d.text.clone();
         if text.is_empty() {
             // treat as delete
             self.db.delete_comment(comment_id)?;
-            let d = self.detail.as_mut().unwrap();
-            d.comments.remove(i);
-            let new_count = d.comments.len();
-            d.field = if new_count == 0 { DetailField::NewComment }
-                      else if i < new_count { DetailField::ExistingComment(i) }
-                      else { DetailField::ExistingComment(new_count - 1) };
+            {
+                let d = self.detail.as_mut().unwrap();
+                d.comments.remove(i);
+                let new_count = d.comments.len();
+                d.field = if new_count == 0 { DetailField::NewComment }
+                          else if i < new_count { DetailField::ExistingComment(i) }
+                          else { DetailField::ExistingComment(new_count - 1) };
+            }
         } else {
             let url = extract_url(&text);
             self.db.update_comment(comment_id, &text, url.as_deref())?;
-            let d = self.detail.as_mut().unwrap();
-            d.comments[i].text = text;
-            d.comments[i].url = url;
+            {
+                let d = self.detail.as_mut().unwrap();
+                d.comments[i].text = text;
+                d.comments[i].url = url;
+            }
         }
+        self.reembed_todo(todo_id, &todo_text)?;
         Ok(())
     }
 
@@ -909,7 +1002,7 @@ impl App {
         // Tick spinner / countdown
         if let Some(ss) = &mut self.sync_status {
             if !ss.done {
-                ss.spinner_frame = (ss.spinner_frame + 1) % 10;
+                ss.spinner_frame = ss.spinner_frame.wrapping_add(1);
             } else if ss.done_frames > 0 {
                 ss.done_frames -= 1;
                 if ss.done_frames == 0 {
@@ -918,6 +1011,218 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    // --- Daily briefing ---
+
+    pub fn open_briefing(&mut self) -> Result<()> {
+        let today = chrono::Local::now().date_naive();
+        let todos_data = self.db.all_undone_todos_with_topics()?;
+
+        let (blocked_data, actionable): (Vec<_>, Vec<_>) =
+            todos_data.into_iter().partition(|(t, _, _)| t.blocked);
+
+        let mut must_do_data:  Vec<(Todo, String, Option<Vec<f32>>)> = Vec::new();
+        let mut in_flight_data: Vec<(Todo, String, Option<Vec<f32>>)> = Vec::new();
+        let mut other_data:    Vec<(Todo, String, Option<Vec<f32>>)> = Vec::new();
+
+        for (todo, topic_name, emb) in actionable {
+            let is_must = todo.due_date.as_deref()
+                .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+                .map(|d| d <= today)
+                .unwrap_or(false);
+            if is_must {
+                must_do_data.push((todo, topic_name, emb));
+            } else if todo.in_progress {
+                in_flight_data.push((todo, topic_name, emb));
+            } else {
+                other_data.push((todo, topic_name, emb));
+            }
+        }
+
+        must_do_data.sort_by(|a, b| briefing_score(&b.0).partial_cmp(&briefing_score(&a.0)).unwrap_or(std::cmp::Ordering::Equal));
+        in_flight_data.sort_by(|a, b| briefing_score(&b.0).partial_cmp(&briefing_score(&a.0)).unwrap_or(std::cmp::Ordering::Equal));
+        other_data.sort_by(|a, b| briefing_score(&b.0).partial_cmp(&briefing_score(&a.0)).unwrap_or(std::cmp::Ordering::Equal));
+        must_do_data.truncate(4);
+        other_data.truncate(20);
+
+        let seeds: Vec<_> = must_do_data.iter().chain(in_flight_data.iter())
+            .map(|(t, n, e)| (t.clone(), n.clone(), e.clone()))
+            .collect();
+        let recommended_data = mmr_select(&seeds, other_data, 5);
+
+        let mut items: Vec<BriefingItem> = Vec::new();
+        for (todo, topic_name, _) in must_do_data {
+            items.push(BriefingItem { todo, topic_name, section: BriefingSection::MustDo });
+        }
+        for (todo, topic_name, _) in in_flight_data {
+            items.push(BriefingItem { todo, topic_name, section: BriefingSection::InFlight });
+        }
+        for (todo, topic_name, _) in recommended_data {
+            items.push(BriefingItem { todo, topic_name, section: BriefingSection::Recommended });
+        }
+        for (todo, topic_name, _) in blocked_data {
+            items.push(BriefingItem { todo, topic_name, section: BriefingSection::Waiting });
+        }
+
+        self.briefing_items = items;
+        self.selected_briefing = 0;
+        self.briefing_open = true;
+        Ok(())
+    }
+
+    pub fn close_briefing(&mut self) {
+        self.briefing_open = false;
+    }
+
+    pub fn briefing_toggle_todo(&mut self) -> Result<()> {
+        let id = self.briefing_items.get(self.selected_briefing).map(|i| i.todo.id);
+        if let Some(id) = id {
+            let (new_done, new_in_progress, new_blocked) = self.db.toggle_todo(id)?;
+            if let Some(item) = self.briefing_items.get_mut(self.selected_briefing) {
+                item.todo.done = new_done;
+                item.todo.in_progress = new_in_progress;
+                item.todo.blocked = new_blocked;
+            }
+            if let Some(t) = self.todos.iter_mut().find(|t| t.id == id) {
+                t.done = new_done;
+                t.in_progress = new_in_progress;
+                t.blocked = new_blocked;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn briefing_snooze(&mut self, days: i64) -> Result<()> {
+        let Some(item) = self.briefing_items.get(self.selected_briefing) else { return Ok(()); };
+        let id = item.todo.id;
+        let base = match item.todo.due_date.as_deref()
+            .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+        {
+            Some(d) => d,
+            None => {
+                if days < 0 { return Ok(()); }
+                chrono::Local::now().date_naive()
+            }
+        };
+        let new_date = base + chrono::Duration::days(days);
+        let date_str = new_date.format("%Y-%m-%d").to_string();
+        self.db.set_todo_due_date(id, Some(&date_str))?;
+        if let Some(item) = self.briefing_items.get_mut(self.selected_briefing) {
+            item.todo.due_date = Some(date_str.clone());
+        }
+        if let Some(t) = self.todos.iter_mut().find(|t| t.id == id) {
+            t.due_date = Some(date_str);
+        }
+        Ok(())
+    }
+
+    pub fn briefing_jump(&mut self) -> Result<()> {
+        let Some(item) = self.briefing_items.get(self.selected_briefing) else {
+            self.briefing_open = false;
+            return Ok(());
+        };
+        let topic_id = item.todo.topic_id;
+        let todo_id  = item.todo.id;
+        self.briefing_open = false;
+        if let Some(pos) = self.topics.iter().position(|t| t.id == topic_id) {
+            self.selected_topic = pos;
+            self.reload_todos()?;
+            if let Some(todo_pos) = self.todos.iter().position(|t| t.id == todo_id) {
+                self.selected_todo = todo_pos;
+            }
+        }
+        self.focus = Focus::Todos;
+        Ok(())
+    }
+
+    pub fn briefing_open_url(&mut self) {
+        let url = self.briefing_items.get(self.selected_briefing)
+            .and_then(|i| i.todo.url.as_deref().map(|s| s.to_string()));
+        match url {
+            Some(u) => {
+                if std::process::Command::new("open").arg(&u).spawn().is_err() {
+                    let _ = std::process::Command::new("xdg-open").arg(&u).spawn();
+                }
+            }
+            None => self.status_message = Some("No URL attached to this item".into()),
+        }
+    }
+}
+
+/// Urgency + priority + in_progress bonus for daily briefing ranking.
+fn briefing_score(todo: &Todo) -> f32 {
+    let today = chrono::Local::now().date_naive();
+    let urgency = todo.due_date.as_deref()
+        .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+        .map(|d| {
+            let diff = (d - today).num_days();
+            match diff {
+                i64::MIN..=-1 => 10.0 + (-diff as f32).min(15.0),
+                0  => 10.0,
+                1  => 7.0,
+                2..=3 => 5.0,
+                4..=6 => 3.0,
+                7..=13 => 1.0,
+                _ => 0.0,
+            }
+        })
+        .unwrap_or(0.0);
+    let priority = match todo.priority {
+        Some(1) => 8.0,
+        Some(2) => 4.0,
+        Some(3) => 1.0,
+        _ => 0.0,
+    };
+    urgency + priority + if todo.in_progress { 5.0 } else { 0.0 }
+}
+
+/// Maximal Marginal Relevance selection: picks `n` items from `candidates` that
+/// balance high focus_score (λ=0.7) against semantic similarity to already-selected
+/// items (1-λ=0.3), seeded with the must_do + in_flight embeddings.
+fn mmr_select(
+    seeds: &[(Todo, String, Option<Vec<f32>>)],
+    mut candidates: Vec<(Todo, String, Option<Vec<f32>>)>,
+    n: usize,
+) -> Vec<(Todo, String, Option<Vec<f32>>)> {
+    let max_score = candidates.iter()
+        .map(|(t, _, _)| briefing_score(t))
+        .fold(0.0f32, f32::max)
+        .max(1.0);
+
+    let mut selected_embs: Vec<Vec<f32>> = seeds.iter()
+        .filter_map(|(_, _, e)| e.clone())
+        .collect();
+
+    let mut result = Vec::new();
+    for _ in 0..n {
+        if candidates.is_empty() { break; }
+        let best_idx = candidates.iter().enumerate()
+            .map(|(i, (todo, _, emb))| {
+                let score = briefing_score(todo) / max_score;
+                let max_sim = emb.as_ref()
+                    .map(|e| selected_embs.iter()
+                        .map(|se| cosine_similarity(e, se))
+                        .fold(0.0f32, f32::max))
+                    .unwrap_or(0.0);
+                (i, 0.7 * score - 0.3 * max_sim)
+            })
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let chosen = candidates.remove(best_idx);
+        if let Some(e) = &chosen.2 { selected_embs.push(e.clone()); }
+        result.push(chosen);
+    }
+    result
+}
+
+/// Combine todo text with comment texts for richer embedding.
+fn build_embed_text(todo_text: &str, comment_texts: &[String]) -> String {
+    if comment_texts.is_empty() {
+        todo_text.to_string()
+    } else {
+        format!("{}\n{}", todo_text, comment_texts.join("\n"))
     }
 }
 
