@@ -29,25 +29,25 @@ pub fn parse(input: &str) -> Result<Option<NaiveDate>, String> {
     }
 
     // "Nwd" — N working days from now (skipping weekends)
-    if let Some(n_str) = lower.strip_suffix("wd") {
-        if let Ok(n) = n_str.parse::<u32>() {
-            let mut date = today;
-            let mut remaining = n;
-            while remaining > 0 {
-                date += Duration::days(1);
-                if date.weekday().num_days_from_monday() < 5 {
-                    remaining -= 1;
-                }
+    if let Some(n_str) = lower.strip_suffix("wd")
+        && let Ok(n) = n_str.parse::<u32>()
+    {
+        let mut date = today;
+        let mut remaining = n;
+        while remaining > 0 {
+            date += Duration::days(1);
+            if date.weekday().num_days_from_monday() < 5 {
+                remaining -= 1;
             }
-            return Ok(Some(date));
         }
+        return Ok(Some(date));
     }
 
     // "Nd" — N days from now
-    if let Some(n_str) = lower.strip_suffix('d') {
-        if let Ok(n) = n_str.parse::<i64>() {
-            return Ok(Some(today + Duration::days(n)));
-        }
+    if let Some(n_str) = lower.strip_suffix('d')
+        && let Ok(n) = n_str.parse::<i64>()
+    {
+        return Ok(Some(today + Duration::days(n)));
     }
 
     // ISO work week — "W16", "w16", or "16w" all mean week 16 of current/next year
@@ -58,26 +58,26 @@ pub fn parse(input: &str) -> Result<Option<NaiveDate>, String> {
     } else {
         None
     };
-    if let Some(week) = week_num {
-        if (1..=53).contains(&week) {
-            let year = today.year();
-            let date = iso_week_monday(year, week)
-                .filter(|d| *d >= today)
-                .or_else(|| iso_week_monday(year + 1, week))
-                .ok_or_else(|| format!("Invalid work week: {}", week))?;
-            return Ok(Some(date));
-        }
+    if let Some(week) = week_num
+        && (1..=53).contains(&week)
+    {
+        let year = today.year();
+        let date = iso_week_monday(year, week)
+            .filter(|d| *d >= today)
+            .or_else(|| iso_week_monday(year + 1, week))
+            .ok_or_else(|| format!("Invalid work week: {}", week))?;
+        return Ok(Some(date));
     }
 
     // "next <weekday>"
-    if let Some(rest) = lower.strip_prefix("next ") {
-        if let Some(wd) = parse_weekday(rest) {
-            let days = (wd.num_days_from_monday() as i64
-                - today.weekday().num_days_from_monday() as i64)
-                .rem_euclid(7);
-            let days = if days == 0 { 7 } else { days } + 7;
-            return Ok(Some(today + Duration::days(days)));
-        }
+    if let Some(rest) = lower.strip_prefix("next ")
+        && let Some(wd) = parse_weekday(rest)
+    {
+        let days = (wd.num_days_from_monday() as i64
+            - today.weekday().num_days_from_monday() as i64)
+            .rem_euclid(7);
+        let days = if days == 0 { 7 } else { days } + 7;
+        return Ok(Some(today + Duration::days(days)));
     }
 
     // weekday name — next occurrence (never today)

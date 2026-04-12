@@ -16,9 +16,9 @@ use clap::{Parser, Subcommand};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend};
 use tui_textarea::TextArea;
 
 use app::{App, AppInfo, DetailField, Focus, Mode};
@@ -258,11 +258,11 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         app.poll_sync()?;
 
         // Fire debounced search ~250 ms after the last query keystroke
-        if let Some(t) = app.search_debounce {
-            if t.elapsed() >= Duration::from_millis(100) {
-                app.search_debounce = None;
-                app.run_search()?;
-            }
+        if let Some(t) = app.search_debounce
+            && t.elapsed() >= Duration::from_millis(100)
+        {
+            app.search_debounce = None;
+            app.run_search()?;
         }
 
         terminal.draw(|f| ui::draw(f, app))?;

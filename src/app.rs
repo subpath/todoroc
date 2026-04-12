@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 use tui_textarea::TextArea;
 
-use crate::db::{cosine_similarity, Database};
+use crate::db::{Database, cosine_similarity};
 use crate::due_date;
 use crate::embeddings::Embedder;
 use crate::models::{Todo, Topic};
@@ -369,10 +369,10 @@ impl App {
         let new_id = self.selected_topic_id();
 
         // Save cursor position when switching away from a topic
-        if self.last_topic_id != new_id {
-            if let Some(prev) = self.last_topic_id {
-                self.topic_cursor_memory.insert(prev, self.selected_todo);
-            }
+        if self.last_topic_id != new_id
+            && let Some(prev) = self.last_topic_id
+        {
+            self.topic_cursor_memory.insert(prev, self.selected_todo);
         }
 
         self.todos = match new_id {
@@ -425,10 +425,10 @@ impl App {
             None => vec![],
         };
         self.todo_sort.clone().apply(&mut self.todos);
-        if let Some(id) = selected_id {
-            if let Some(pos) = self.todos.iter().position(|t| t.id == id) {
-                self.selected_todo = pos;
-            }
+        if let Some(id) = selected_id
+            && let Some(pos) = self.todos.iter().position(|t| t.id == id)
+        {
+            self.selected_todo = pos;
         }
         Ok(())
     }

@@ -116,7 +116,7 @@ pub fn sync_headless(
 
     let sprint_issues = fetch_issues("assignee = currentUser() AND sprint in openSprints()")?;
     let backlog_issues = fetch_issues(
-        "assignee = currentUser() AND statusCategory != Done AND (sprint is EMPTY OR sprint not in openSprints())"
+        "assignee = currentUser() AND statusCategory != Done AND (sprint is EMPTY OR sprint not in openSprints())",
     )?;
 
     report(&format!(

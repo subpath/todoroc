@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
-use rusqlite::{params, Connection, OptionalExtension};
-use rusqlite_migration::{Migrations, M};
+use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite_migration::{M, Migrations};
 
 use crate::models::{Todo, Topic};
 
@@ -10,7 +10,8 @@ pub struct Database {
 }
 
 const MIGRATIONS: &[M] = &[
-    M::up("
+    M::up(
+        "
         CREATE TABLE IF NOT EXISTS topics (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -23,23 +24,28 @@ const MIGRATIONS: &[M] = &[
             done INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL
         );
-    "),
+    ",
+    ),
     M::up("ALTER TABLE todos ADD COLUMN url TEXT;"),
     M::up("ALTER TABLE todos ADD COLUMN due_date TEXT;"),
     M::up("ALTER TABLE todos ADD COLUMN priority INTEGER;"),
     M::up("ALTER TABLE todos ADD COLUMN in_progress INTEGER NOT NULL DEFAULT 0;"),
     M::up("ALTER TABLE todos ADD COLUMN started_at TEXT;"),
     M::up("ALTER TABLE todos ADD COLUMN completed_at TEXT;"),
-    M::up("
+    M::up(
+        "
         CREATE TABLE IF NOT EXISTS comments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             todo_id INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
             text TEXT NOT NULL,
             created_at TEXT NOT NULL
         );
-    "),
+    ",
+    ),
     M::up("ALTER TABLE comments ADD COLUMN url TEXT;"),
-    M::up("ALTER TABLE topics ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0; UPDATE topics SET sort_order = id;"),
+    M::up(
+        "ALTER TABLE topics ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0; UPDATE topics SET sort_order = id;",
+    ),
     M::up("ALTER TABLE todos ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0;"),
 ];
 

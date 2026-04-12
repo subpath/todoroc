@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState},
-    Frame,
 };
 
 use crate::app::{App, Focus, Mode};
@@ -92,7 +92,12 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     if focused && app.mode == Mode::Insert {
-        let input_text = app.input_ta.lines().first().map(|s| s.as_str()).unwrap_or("");
+        let input_text = app
+            .input_ta
+            .lines()
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or("");
         let cursor_col = app.input_ta.cursor().1;
         let chars: Vec<char> = input_text.chars().collect();
         let before: String = chars[..cursor_col.min(chars.len())].iter().collect();

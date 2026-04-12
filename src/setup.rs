@@ -11,7 +11,7 @@ use crate::db::Database;
 use crate::embeddings::Embedder;
 
 thread_local! {
-    static LOCAL_EMBEDDER: RefCell<Option<Embedder>> = RefCell::new(None);
+    static LOCAL_EMBEDDER: RefCell<Option<Embedder>> = const { RefCell::new(None) };
 }
 
 fn hf_url(model: &str, file: &str) -> String {
@@ -104,8 +104,7 @@ pub fn reindex(db_path: &str, model_dir: &Path) -> Result<()> {
     let db = Database::open(db_path)?;
 
     // Verify the model loads before spinning up worker threads.
-    Embedder::load(model_dir)
-        .context("Failed to load embedder — run `todo model <name>` first")?;
+    Embedder::load(model_dir).context("Failed to load embedder — run `todo model <name>` first")?;
 
     let todos = db.all_todos()?;
     if todos.is_empty() {
@@ -205,4 +204,3 @@ pub fn reindex_headless(
     }
     Ok(())
 }
-

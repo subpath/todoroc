@@ -4,11 +4,11 @@ mod todos;
 mod topics;
 
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
-    Frame,
 };
 
 use crate::app::{App, DetailField};
@@ -30,7 +30,7 @@ fn comment_rows(text: &str, field_w: usize) -> usize {
     if field_w == 0 || text.is_empty() {
         return 1;
     }
-    (text.chars().count() + field_w - 1) / field_w
+    text.chars().count().div_ceil(field_w)
 }
 
 /// Render a 2-row wrapping text area with inline cursor. Returns the row Lines.
