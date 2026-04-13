@@ -153,3 +153,27 @@ pub fn current_week_label() -> String {
 pub fn current_date_label() -> String {
     Local::now().date_naive().format("%a %b %-d").to_string()
 }
+
+/// Working days remaining in the current quarter (including today if it's a working day).
+/// e.g. "Q2 15d"
+pub fn quarter_label() -> String {
+    let today = Local::now().date_naive();
+    let month = today.month();
+    let year = today.year();
+    let q = (month - 1) / 3 + 1;
+    let quarter_end = match month {
+        1..=3 => NaiveDate::from_ymd_opt(year, 3, 31).unwrap(),
+        4..=6 => NaiveDate::from_ymd_opt(year, 6, 30).unwrap(),
+        7..=9 => NaiveDate::from_ymd_opt(year, 9, 30).unwrap(),
+        _ => NaiveDate::from_ymd_opt(year, 12, 31).unwrap(),
+    };
+    let mut wd = 0i64;
+    let mut d = today;
+    while d <= quarter_end {
+        if d.weekday().num_days_from_monday() < 5 {
+            wd += 1;
+        }
+        d += Duration::days(1);
+    }
+    format!("Q{}·{}d", q, wd)
+}

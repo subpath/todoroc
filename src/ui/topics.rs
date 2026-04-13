@@ -41,6 +41,8 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(due_date::current_date_label(), dim),
             Span::styled("  ", dim),
             Span::styled(due_date::current_week_label(), dim),
+            Span::styled("  ", dim),
+            Span::styled(due_date::quarter_label(), dim),
             Span::styled(stats_str, Style::default().fg(stats_color)),
             Span::raw(" "),
         ]))
